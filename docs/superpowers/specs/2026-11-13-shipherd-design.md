@@ -70,8 +70,8 @@ The single path for all input into panes.
 ### Web (axum)
 - Bound to `127.0.0.1` only. Port 7777 by default (`--port`); if it's busy, falls back to a port picked by the OS. The actual URL is shown in the TUI header.
 - Frontend: hand-written HTML/CSS/JS (no build step), embedded in the binary.
-- **Board:** kanban columns NEEDS YOU / WORKING / DONE (idle agents in a collapsed row underneath). Cards show agent, repo · branch, time in state, a few preview lines; NEEDS YOU cards have Approve/Deny buttons when supported.
-- **Detail panel** (opened by clicking a card): live output mirror (plain text from `capture --plain`, about 400 ms refresh; colours are out of scope for v1, see the capture note above), pane facts (cwd, branch, launch command, processes and listening ports from `tty7 procs`, time in state), Approve / Deny / Reply, and an **Interact** toggle.
+- **Board:** kanban columns NEEDS YOU / WORKING / DONE (idle agents in a collapsed row underneath). Cards show agent, repo · branch, time in state, and the agent's task title (its terminal title without the spinner glyph; preview lines would require capturing every pane several times a second while the page is open); NEEDS YOU cards have Approve/Deny buttons when supported.
+- **Detail panel** (opened by clicking a card): live output mirror (plain text from `capture --plain`, about 400 ms refresh; colours are out of scope for v1, see the capture note above), pane facts (cwd, branch, launch command, processes and listening ports from `tty7 procs`, time in state), Approve / Deny / Reply, and an **Interact** toggle. Port entries from `tty7 procs` are shown untyped (`port` if present, else raw JSON) until a real one has been recorded.
 - **Interact mode:** off by default, per pane. While on, the panel has an amber border and an "INTERACTING" label, and browser keystrokes are mapped to `tty7 send --key` names (printable characters as text). It switches off after 2 minutes without a keystroke, or when the panel closes.
 - Transport: one WebSocket per page. Server → client: snapshots, preview updates, action results. Client → server: watch/unwatch pane, actions.
 
@@ -85,6 +85,7 @@ Interact mode can type into shells, so the web server is treated as a local remo
 - The WebSocket upgrade requires `Origin` equal to `http://127.0.0.1:<port>` or `http://localhost:<port>`.
 - No CORS headers.
 - The token is never logged.
+- `w` passes the login link to `open`/`xdg-open`, so the token is briefly visible in `ps` to other local users.
 
 ## Error handling
 
@@ -107,6 +108,7 @@ Logs go to `~/.local/state/shipherd/shipherd.log` (never to the terminal; it wou
 - **actions:** with a fake `Tty7Cli` — race guard, reply via stdin, per-agent key table, rejection of unknown pane ids.
 - **Web security:** HTTP-level tests that the server rejects a missing or wrong token, a foreign `Host`, a foreign `Origin`, and accepts the correct ones.
 - **TUI:** rendering against ratatui's `TestBackend` asserting on the rendered text (no snapshot library).
+- **Web:** auth checks and session logic as pure unit tests; the router via `tower::ServiceExt::oneshot`; two end-to-end WebSocket tests with `tokio-tungstenite`.
 - **CI:** GitHub Actions on macOS and Linux — `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`.
 
 ## Tech
