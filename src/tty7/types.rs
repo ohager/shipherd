@@ -1,0 +1,189 @@
+use serde::Deserialize;
+
+/// Agent status from tty7's hooks. Declaration order is display order (`derive(Ord)` sorts by it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Status {
+    Waiting,
+    Working,
+    Done,
+    Idle,
+    /// A status this version of shipherd doesn't know yet.
+    #[serde(other)]
+    Unknown,
+}
+
+impl Status {
+    pub fn label(self) -> &'static str {
+        match self {
+            Status::Waiting => "needs you",
+            Status::Working => "working",
+            Status::Done => "done",
+            Status::Idle => "idle",
+            Status::Unknown => "unknown",
+        }
+    }
+}
+
+/// `tty7 agents --json`
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct AgentsResponse {
+    #[serde(default)]
+    pub agents: Vec<AgentEntry>,
+    #[serde(default)]
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentEntry {
+    pub pane_id: u32,
+    pub agent: String,
+    pub state: AgentEntryState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentEntryState {
+    pub status: Option<Status>,
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub launch_argv: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Diagnostic {
+    pub kind: String,
+    pub agent: Option<String>,
+}
+
+/// The `pane` object inside a `layout.delta.pane_facts` event.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PaneFacts {
+    pub id: u32,
+    pub cwd: Option<String>,
+    pub agent: Option<PaneAgent>,
+    #[serde(default = "default_live")]
+    pub live: bool,
+}
+
+fn default_live() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PaneAgent {
+    pub agent: String,
+    pub status: Option<Status>,
+}
+
+/// `tty7 capture --plain --json`
+#[derive(Debug, Clone, Deserialize)]
+pub struct CaptureResponse {
+    pub text: String,
+}
+
+/// One line of `tty7 events --json`. Only pane facts matter to shipherd; everything else is `Other`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Event {
+    PaneFacts(PaneFacts),
+    Other,
+}
+
+pub fn parse_event(line: &str) -> anyhow::Result<Event> {
+    let value: serde_json::Value = serde_json::from_str(line)?;
+    match value.pointer("/layout/delta/pane_facts/pane") {
+        Some(pane) => Ok(Event::PaneFacts(PaneFacts::deserialize(pane)?)),
+        None => Ok(Event::Other),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const AGENTS: &str = include_str!("../../tests/fixtures/agents.json");
+    const NO_HOOKS: &str = include_str!("../../tests/fixtures/agents-no-hooks.json");
+    const EVENTS: &str = include_str!("../../tests/fixtures/events.ndjson");
+    const CAPTURE: &str = include_str!("../../tests/fixtures/capture.json");
+
+    #[test]
+    fn parses_agents_response() {
+        let resp: AgentsResponse = serde_json::from_str(AGENTS).unwrap();
+        assert_eq!(resp.agents.len(), 2);
+        assert_eq!(resp.agents[0].pane_id, 54);
+        assert_eq!(resp.agents[0].agent, "Claude");
+        assert_eq!(resp.agents[0].state.status, Some(Status::Working));
+        assert_eq!(
+            resp.agents[0].state.cwd.as_deref(),
+            Some("/home/dev/code/hermes")
+        );
+        assert!(resp.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn parses_missing_hooks_diagnostic() {
+        let resp: AgentsResponse = serde_json::from_str(NO_HOOKS).unwrap();
+        assert!(resp.agents.is_empty());
+        assert_eq!(
+            resp.diagnostics,
+            vec![Diagnostic {
+                kind: "agent_status_hooks_unavailable".into(),
+                agent: Some("claude".into()),
+            }]
+        );
+    }
+
+    #[test]
+    fn parses_recorded_event_stream() {
+        let events: Vec<Event> = EVENTS.lines().map(|l| parse_event(l).unwrap()).collect();
+        let statuses: Vec<(u32, Option<Status>)> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::PaneFacts(f) => Some((f.id, f.agent.as_ref().and_then(|a| a.status))),
+                Event::Other => None,
+            })
+            .collect();
+        assert_eq!(
+            statuses,
+            vec![
+                (56, None),
+                (56, Some(Status::Idle)),
+                (56, Some(Status::Working)),
+                (56, Some(Status::Waiting)),
+                (56, Some(Status::Done)),
+                (7, None),
+            ]
+        );
+        assert_eq!(events.iter().filter(|e| **e == Event::Other).count(), 2);
+    }
+
+    #[test]
+    fn unknown_status_does_not_fail() {
+        let line = r#"{"layout":{"delta":{"pane_facts":{"pane":{"id":1,"agent":{"agent":"Claude","status":"pondering"},"live":true}}}}}"#;
+        let Event::PaneFacts(facts) = parse_event(line).unwrap() else {
+            panic!("expected pane facts");
+        };
+        assert_eq!(facts.agent.unwrap().status, Some(Status::Unknown));
+        assert_eq!(facts.cwd, None);
+    }
+
+    #[test]
+    fn invalid_json_is_an_error() {
+        assert!(parse_event("not json").is_err());
+    }
+
+    #[test]
+    fn parses_capture() {
+        let capture: CaptureResponse = serde_json::from_str(CAPTURE).unwrap();
+        assert!(capture.text.contains("Do you want to proceed?"));
+    }
+
+    #[test]
+    fn statuses_sort_in_display_order() {
+        let mut statuses = vec![Status::Idle, Status::Done, Status::Waiting, Status::Working];
+        statuses.sort();
+        assert_eq!(
+            statuses,
+            vec![Status::Waiting, Status::Working, Status::Done, Status::Idle]
+        );
+    }
+}

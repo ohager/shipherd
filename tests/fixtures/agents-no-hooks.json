@@ -1,0 +1,1 @@
+{"agents":[],"diagnostics":[{"kind":"agent_status_hooks_unavailable","agent":"claude","hooks_state":"not_installed","action":"install"}]}
