@@ -1,2 +1,45 @@
 <!doctype html>
-<title>shipherd</title>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>shipherd</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header>
+    <h1>⛵ shipherd</h1>
+    <span id="summary"></span>
+    <span id="conn"></span>
+  </header>
+  <div id="banners"></div>
+
+  <main id="board">
+    <section class="column" data-status="waiting"><h2>Needs you</h2><div class="cards"></div></section>
+    <section class="column" data-status="working"><h2>Working</h2><div class="cards"></div></section>
+    <section class="column" data-status="done"><h2>Done</h2><div class="cards"></div></section>
+  </main>
+  <details id="idle"><summary>Idle <span class="count"></span></summary><div class="cards"></div></details>
+
+  <aside id="detail" hidden>
+    <div class="detail-head">
+      <div><strong id="d-agent"></strong> <span id="d-where"></span></div>
+      <button id="d-close" aria-label="Close">×</button>
+    </div>
+    <dl id="d-facts"></dl>
+    <div id="d-procs"></div>
+    <div id="d-interact-label" hidden>INTERACTING: your keys go to this agent</div>
+    <pre id="d-mirror"></pre>
+    <div class="d-actions">
+      <button id="d-approve" hidden>Approve</button>
+      <button id="d-deny" hidden>Deny</button>
+      <form id="d-reply" hidden><input id="d-reply-text" placeholder="Reply…" autocomplete="off"><button>Send</button></form>
+      <label class="toggle"><input type="checkbox" id="d-interact"> Interact</label>
+    </div>
+    <p id="d-result"></p>
+  </aside>
+
+  <script src="/app.js"></script>
+</body>
+</html>
