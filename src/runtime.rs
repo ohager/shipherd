@@ -18,6 +18,8 @@ pub const PREVIEW_LINES: u32 = 200;
 const PREVIEW_EVERY: Duration = Duration::from_millis(400);
 /// Also how closed panes disappear: the close event's shape hasn't been recorded yet.
 const RESYNC_EVERY: Duration = Duration::from_secs(10);
+/// Claude Code needs a moment to process a keystroke, and tty7 sends no event for a cancelled prompt.
+const RESYNC_AFTER_ACTION: Duration = Duration::from_millis(1500);
 const FIRST_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 
@@ -109,6 +111,7 @@ impl Core {
         let mut resync_tick = interval_at(Instant::now() + RESYNC_EVERY, RESYNC_EVERY);
         preview_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
         resync_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let mut follow_up_at: Option<Instant> = None;
 
         loop {
             tokio::select! {
@@ -143,13 +146,20 @@ impl Core {
                     }
                 },
                 _ = resync_tick.tick() => self.resync().await,
+                _ = sleep_until(follow_up_at.unwrap_or_else(Instant::now)), if follow_up_at.is_some() => {
+                    follow_up_at = None;
+                    self.resync().await;
+                }
                 _ = preview_tick.tick() => self.refresh_previews().await,
                 request = requests.recv() => match request {
                     Some(Request::Action { action, reply }) => {
                         let outcome = actions::execute(self.cli.as_ref(), &self.fleet, &action).await;
-                        // tty7 sends no event when a prompt is cancelled, so the fleet would stay
-                        // stale until the next periodic resync.
+                        // Now for a refused action (the fleet was stale), and again shortly for a
+                        // sent one, whose effect tty7 may never announce with an event.
                         self.resync().await;
+                        if outcome == Outcome::Sent {
+                            follow_up_at = Some(Instant::now() + RESYNC_AFTER_ACTION);
+                        }
                         let _ = reply.send(outcome);
                     }
                     Some(Request::Watch { client, panes }) => {
@@ -366,6 +376,34 @@ mod tests {
         handle.act(Action::Approve { pane: 54 }).await;
 
         assert_eq!(handle.snapshots.borrow().panes[&54].status, Status::Done);
+    }
+
+    #[tokio::test]
+    async fn status_changes_shortly_after_an_action_are_picked_up() {
+        let cli = Arc::new(FakeCli::with_agents(WAITING_54));
+        let _events = cli.push_event_stream();
+        let handle = start(cli.clone());
+        wait_for(&handle, |f| f.panes.contains_key(&54)).await;
+
+        assert_eq!(handle.act(Action::Deny { pane: 54 }).await, Outcome::Sent);
+        // Claude Code takes a moment to process Esc, and tty7 sends no event for it.
+        *cli.agents.lock().unwrap() = Some(
+            serde_json::from_str(
+                r#"{"agents":[{"pane_id":54,"agent":"Claude","state":{"status":"done","cwd":"/tmp/x"}}]}"#,
+            )
+            .unwrap(),
+        );
+
+        let fleet = tokio::time::timeout(Duration::from_secs(3), async {
+            let mut rx = handle.snapshots.clone();
+            rx.wait_for(|f| f.panes[&54].status == Status::Done)
+                .await
+                .unwrap()
+                .clone()
+        })
+        .await
+        .expect("follow-up resync should land well before the 10 s periodic one");
+        assert_eq!(fleet.panes[&54].status, Status::Done);
     }
 
     #[tokio::test]

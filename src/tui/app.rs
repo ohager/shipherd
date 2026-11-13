@@ -60,6 +60,15 @@ impl App {
 
     fn handle_reply_key(&mut self, key: KeyEvent) -> Option<Command> {
         let buffer = self.reply.as_mut()?;
+        if key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        {
+            if key.code == KeyCode::Char('c') {
+                self.reply = None;
+            }
+            return None;
+        }
         match key.code {
             KeyCode::Esc => self.reply = None,
             KeyCode::Backspace => {
@@ -277,6 +286,24 @@ mod tests {
                 text: "ok".into()
             }))
         );
+        assert_eq!(app.reply, None);
+    }
+
+    #[test]
+    fn control_keys_are_not_typed_into_a_reply() {
+        let fleet = sample();
+        let mut app = App {
+            selected: Some(4),
+            ..App::default()
+        };
+        press(&mut app, &fleet, &[KeyCode::Char('r'), KeyCode::Char('a')]);
+        // A pasted newline arrives as Ctrl+J.
+        let ctrl_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL);
+        assert_eq!(app.handle_key(ctrl_j, &fleet), None);
+        assert_eq!(app.reply.as_deref(), Some("a"));
+
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(app.handle_key(ctrl_c, &fleet), None);
         assert_eq!(app.reply, None);
     }
 
