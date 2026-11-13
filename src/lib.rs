@@ -4,3 +4,4 @@ pub mod actions;
 pub mod fleet;
 pub mod runtime;
 pub mod tty7;
+pub mod tui;
