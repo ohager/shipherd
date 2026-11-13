@@ -123,9 +123,9 @@ fn agent_line(pane: &AgentPane, selected: bool, now_ms: u64) -> Line<'static> {
     );
     let text = format!(
         " {:<7} {:<12} {:<14} {:>7}",
-        pane.agent.to_lowercase(),
-        pane.repo.as_deref().unwrap_or("-"),
-        pane.branch.as_deref().unwrap_or("-"),
+        fit(&pane.agent.to_lowercase(), 7),
+        fit(pane.repo.as_deref().unwrap_or("-"), 12),
+        fit(pane.branch.as_deref().unwrap_or("-"), 14),
         elapsed
     );
     let line = Line::from(vec![
@@ -136,6 +136,16 @@ fn agent_line(pane: &AgentPane, selected: bool, now_ms: u64) -> Line<'static> {
         line.style(Style::new().bg(Color::Rgb(31, 42, 58)))
     } else {
         line
+    }
+}
+
+/// `format!` padding doesn't truncate, so long names would push the elapsed time off screen.
+fn fit(text: &str, width: usize) -> String {
+    if text.chars().count() <= width {
+        text.to_string()
+    } else {
+        let kept: String = text.chars().take(width - 1).collect();
+        format!("{kept}…")
     }
 }
 
@@ -284,5 +294,20 @@ mod tests {
     #[test]
     fn footer_lists_the_keys() {
         assert!(draw(&sample(), &App::default()).contains("y approve · n deny · r reply · q quit"));
+    }
+
+    #[test]
+    fn long_repo_and_branch_names_do_not_push_the_time_off_screen() {
+        let mut fleet = fleet_with(&[(1, "Claude", Status::Working, NOW - 41_000)]);
+        fleet.set_git(
+            1,
+            Some("hermes-reimagined".into()),
+            Some("feature/ari-48899-hermes-us-reimagined-production".into()),
+        );
+        let screen = draw(&fleet, &App::default());
+        let row = screen.lines().find(|l| l.contains("claude")).unwrap();
+        assert!(row.contains("41s"), "{screen}");
+        assert!(row.contains("hermes-reim…"), "{screen}");
+        assert!(row.contains("feature/ari-4…"), "{screen}");
     }
 }
