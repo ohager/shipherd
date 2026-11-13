@@ -3,7 +3,7 @@
 use std::time::{Duration, Instant};
 
 use super::protocol::{AgentView, ClientMsg, ServerMsg};
-use crate::actions::{Action, KeyInput};
+use crate::actions::{self, Action, KeyInput};
 use crate::fleet::Fleet;
 
 pub const INTERACT_IDLE: Duration = Duration::from_secs(120);
@@ -103,6 +103,7 @@ impl Session {
             out.push(ServerMsg::Preview {
                 pane,
                 text: text.clone(),
+                permission_prompt: actions::is_permission_prompt(text),
             });
             self.last_preview = Some(text.clone());
         }
@@ -162,7 +163,8 @@ mod tests {
             session.updates(&fleet, now),
             vec![ServerMsg::Preview {
                 pane: 1,
-                text: "mine".into()
+                text: "mine".into(),
+                permission_prompt: false,
             }]
         );
         assert!(session.updates(&fleet, now).is_empty());
@@ -308,5 +310,24 @@ mod tests {
             session.on_client(ClientMsg::OpenTty7, Instant::now()),
             vec![Effect::OpenTty7]
         );
+    }
+
+    #[test]
+    fn previews_say_whether_a_permission_prompt_is_showing() {
+        let mut fleet = fleet_with(&[(1, "Claude", Status::Waiting, 0)]);
+        let mut session = Session::default();
+        let now = Instant::now();
+        session.on_client(ClientMsg::Watch { pane: Some(1) }, now);
+        fleet.set_preview(
+            1,
+            include_str!("../../tests/fixtures/screen-permission.txt").into(),
+        );
+        assert!(matches!(
+            session.updates(&fleet, now).last(),
+            Some(ServerMsg::Preview {
+                permission_prompt: true,
+                ..
+            })
+        ));
     }
 }

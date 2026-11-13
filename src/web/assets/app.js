@@ -8,7 +8,8 @@ const NAMED_KEYS = {
   Home: "home", End: "end", PageUp: "pageup", PageDown: "pagedown",
 };
 
-const state = { agents: [], banners: [], selected: null, interacting: false, nextId: 1, ws: null };
+// permissionPrompt: what the selected pane's screen shows; null until its first preview arrives.
+const state = { agents: [], banners: [], selected: null, interacting: false, nextId: 1, ws: null, permissionPrompt: null };
 let pendingKeys = [];
 let flushTimer = null;
 
@@ -71,7 +72,11 @@ function receive(msg) {
       render();
       break;
     case "preview":
-      if (msg.pane === state.selected) showPreview(msg.text);
+      if (msg.pane === state.selected) {
+        state.permissionPrompt = msg.permission_prompt;
+        showPreview(msg.text);
+        renderDetail();
+      }
       break;
     case "procs":
       if (msg.pane === state.selected) showProcs(msg);
@@ -144,6 +149,7 @@ function select(pane) {
   if (state.selected === pane) return;
   setInteracting(false, true);
   state.selected = pane;
+  state.permissionPrompt = null;
   $("d-mirror").textContent = "";
   $("d-procs").textContent = "";
   $("d-result").textContent = "";
@@ -186,7 +192,8 @@ function renderDetail() {
     return [el("dt", null, label), dd];
   }));
 
-  const canAnswer = agent.status === "waiting" && agent.can_answer;
+  // The server refuses approve/deny on questions anyway; hiding them avoids the confusion.
+  const canAnswer = agent.status === "waiting" && agent.can_answer && state.permissionPrompt !== false;
   $("d-approve").hidden = $("d-deny").hidden = !canAnswer;
   $("d-reply").hidden = !(agent.status === "done" || agent.status === "idle");
 }

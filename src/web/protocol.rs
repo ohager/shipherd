@@ -56,6 +56,8 @@ pub enum ServerMsg {
     Preview {
         pane: u32,
         text: String,
+        /// Lets the page offer approve/deny only when they'd answer a permission prompt.
+        permission_prompt: bool,
     },
     Procs {
         pane: u32,
@@ -68,10 +70,7 @@ pub enum ServerMsg {
         message: Option<String>,
     },
     /// Interact mode's state as the server sees it; the page follows it.
-    Interact {
-        pane: u32,
-        on: bool,
-    },
+    Interact { pane: u32, on: bool },
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
