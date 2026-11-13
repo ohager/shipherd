@@ -197,4 +197,17 @@ mod tests {
         }
         panic!("tty7 was not activated");
     }
+
+    #[tokio::test]
+    async fn the_page_can_close_an_agent_pane() {
+        let (cli, _server, mut ws, _events) = setup().await;
+        send(
+            &mut ws,
+            serde_json::json!({"type": "close", "id": 5, "pane": 54}),
+        )
+        .await;
+        let result = next_of_type(&mut ws, "action_result").await;
+        assert_eq!(result["ok"], true);
+        assert_eq!(cli.sent(), vec![Sent::Close { pane: 54 }]);
+    }
 }

@@ -104,6 +104,11 @@ pub enum ClientMsg {
     },
     /// Brings the tty7 window to the front.
     OpenTty7,
+    /// Sent only after the page asked the user to confirm.
+    Close {
+        id: u64,
+        pane: u32,
+    },
 }
 
 #[cfg(test)]
@@ -164,5 +169,11 @@ mod tests {
     fn open_tty7_parses() {
         let msg: ClientMsg = serde_json::from_str(r#"{"type":"open_tty7"}"#).unwrap();
         assert_eq!(msg, ClientMsg::OpenTty7);
+    }
+
+    #[test]
+    fn close_parses() {
+        let msg: ClientMsg = serde_json::from_str(r#"{"type":"close","id":3,"pane":22}"#).unwrap();
+        assert_eq!(msg, ClientMsg::Close { id: 3, pane: 22 });
     }
 }

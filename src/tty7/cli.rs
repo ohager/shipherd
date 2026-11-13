@@ -123,6 +123,16 @@ impl Tty7Cli for RealCli {
         Self::run(&[], None).await.map(|_| ())
     }
 
+    async fn close_pane(&self, pane: u32) -> anyhow::Result<()> {
+        let args = vec![
+            "pane".to_string(),
+            "close".into(),
+            format!("%{pane}"),
+            "-q".into(),
+        ];
+        Self::run(&args, None).await.map(|_| ())
+    }
+
     fn spawn_events(&self) -> anyhow::Result<mpsc::Receiver<String>> {
         let mut child = Command::new("tty7")
             .args(["events", "--json"])

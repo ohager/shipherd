@@ -30,5 +30,7 @@ pub trait Tty7Cli: Send + Sync {
     async fn panes(&self) -> anyhow::Result<PanesResponse>;
     /// Brings the tty7 window to the front (launching it if needed) without opening a tab.
     async fn activate_gui(&self) -> anyhow::Result<()>;
+    /// Always closes exactly `pane`: without an argument tty7 would close the caller's own pane.
+    async fn close_pane(&self, pane: u32) -> anyhow::Result<()>;
     fn spawn_events(&self) -> anyhow::Result<mpsc::Receiver<String>>;
 }

@@ -23,6 +23,10 @@ pub enum Action {
         pane: u32,
         keys: Vec<KeyInput>,
     },
+    /// Hangs up the pane's shell, ending the agent session. The views confirm before sending it.
+    Close {
+        pane: u32,
+    },
 }
 
 impl Action {
@@ -31,7 +35,8 @@ impl Action {
             Action::Approve { pane }
             | Action::Deny { pane }
             | Action::Reply { pane, .. }
-            | Action::Keys { pane, .. } => *pane,
+            | Action::Keys { pane, .. }
+            | Action::Close { pane } => *pane,
         }
     }
 }
@@ -198,7 +203,7 @@ fn allowed_statuses(action: &Action) -> &'static [Status] {
     match action {
         Action::Approve { .. } | Action::Deny { .. } => &[Status::Waiting],
         Action::Reply { .. } => &[Status::Done, Status::Idle],
-        Action::Keys { .. } => &[],
+        Action::Keys { .. } | Action::Close { .. } => &[],
     }
 }
 
@@ -215,6 +220,12 @@ pub async fn execute(cli: &dyn Tty7Cli, fleet: &Fleet, action: &Action) -> Outco
             enter: true,
         }),
         Action::Keys { keys, .. } => return send_interactive(cli, pane, keys).await,
+        Action::Close { .. } => {
+            return match cli.close_pane(pane).await {
+                Ok(()) => Outcome::Sent,
+                Err(err) => Outcome::Failed(err.to_string()),
+            };
+        }
     };
     let Some(keystrokes) = keystrokes else {
         return Outcome::Unsupported;
@@ -492,5 +503,28 @@ mod tests {
                 "that's a question, not a permission prompt; answer it with Interact or in its pane"
             )
         );
+    }
+
+    #[tokio::test]
+    async fn close_closes_exactly_that_pane_whatever_its_status() {
+        let cli = tty7_reports(54, "Claude", "working");
+        let fleet = fleet_with(&[(54, "Claude", Status::Working, 0)]);
+        assert_eq!(
+            execute(&cli, &fleet, &Action::Close { pane: 54 }).await,
+            Outcome::Sent
+        );
+        assert_eq!(cli.sent(), vec![Sent::Close { pane: 54 }]);
+    }
+
+    #[tokio::test]
+    async fn close_only_works_on_agent_panes() {
+        // shipherd's own pane and plain shells are never in the fleet.
+        let cli = tty7_reports(54, "Claude", "working");
+        let fleet = fleet_with(&[(54, "Claude", Status::Working, 0)]);
+        assert_eq!(
+            execute(&cli, &fleet, &Action::Close { pane: 61 }).await,
+            Outcome::UnknownPane
+        );
+        assert!(cli.sent().is_empty());
     }
 }

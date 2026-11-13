@@ -147,6 +147,7 @@ setInterval(() => {
 
 function select(pane) {
   if (state.selected === pane) return;
+  hideCloseConfirm();
   setInteracting(false, true);
   state.selected = pane;
   state.permissionPrompt = null;
@@ -158,6 +159,7 @@ function select(pane) {
 }
 
 function closeDetail() {
+  hideCloseConfirm();
   setInteracting(false, true);
   state.selected = null;
   send({ type: "watch", pane: null });
@@ -217,6 +219,23 @@ function act(kind, pane, text) {
   send(msg);
 }
 
+// --- closing a pane ---------------------------------------------------
+
+function askCloseConfirm() {
+  const agent = current();
+  if (!agent) return;
+  const where = [agent.agent, agent.workspace, agent.title && `"${agent.title}"`].filter(Boolean).join(" · ");
+  const busy = agent.status === "working" || agent.status === "waiting" ? " It's in the middle of a task." : "";
+  $("d-confirm-text").textContent = `Close %${agent.pane} · ${where}? This ends the session.${busy}`;
+  $("d-confirm").hidden = false;
+  $("d-close-pane").hidden = true;
+}
+
+function hideCloseConfirm() {
+  $("d-confirm").hidden = true;
+  $("d-close-pane").hidden = false;
+}
+
 // --- interact mode ------------------------------------------------------
 
 function setInteracting(on, notify) {
@@ -273,6 +292,12 @@ document.addEventListener("keydown", (event) => {
 
 $("open-tty7").onclick = () => send({ type: "open_tty7" });
 $("d-close").onclick = closeDetail;
+$("d-close-pane").onclick = askCloseConfirm;
+$("d-confirm-no").onclick = hideCloseConfirm;
+$("d-confirm-yes").onclick = () => {
+  act("close", state.selected);
+  hideCloseConfirm();
+};
 $("d-approve").onclick = () => act("approve", state.selected);
 $("d-deny").onclick = () => act("deny", state.selected);
 $("d-reply").onsubmit = (event) => {

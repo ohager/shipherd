@@ -57,4 +57,9 @@ button.deny, #d-deny { background: #8e2a2a; }
 #d-reply[hidden] { display: none; }
 #d-reply input { flex: 1; background: #0b0d12; color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 4px 8px; font: inherit; }
 .toggle { margin-left: auto; color: var(--dim); }
+button.danger { background: #8e2a2a; }
+button.danger-outline { background: none; color: #f08080; border: 1px solid #8e2a2a; }
+#d-confirm { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; background: #2a1515; border: 1px solid #8e2a2a; border-radius: 6px; padding: 8px; }
+#d-confirm[hidden] { display: none; }
+#d-confirm-text { flex: 1; }
 #d-result { color: var(--waiting); margin: 0; min-height: 1.4em; }

@@ -66,6 +66,10 @@ impl Session {
                 }
             }
             ClientMsg::OpenTty7 => vec![Effect::OpenTty7],
+            ClientMsg::Close { id, pane } => vec![Effect::Act {
+                id,
+                action: Action::Close { pane },
+            }],
             ClientMsg::Keys { pane, keys } => match self.interact {
                 Some((p, last)) if p == pane && now.duration_since(last) < INTERACT_IDLE => {
                     self.interact = Some((pane, now));
@@ -329,5 +333,17 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn close_becomes_an_action() {
+        let mut session = Session::default();
+        assert_eq!(
+            session.on_client(ClientMsg::Close { id: 3, pane: 22 }, Instant::now()),
+            vec![Effect::Act {
+                id: 3,
+                action: Action::Close { pane: 22 }
+            }]
+        );
     }
 }

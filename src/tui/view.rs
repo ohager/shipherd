@@ -47,7 +47,7 @@ pub fn render(frame: &mut Frame, fleet: &Fleet, app: &App, now_ms: u64) {
         Paragraph::new(preview_lines(fleet, app, preview.height)),
         preview,
     );
-    frame.render_widget(Paragraph::new(footer_line(app)), footer);
+    frame.render_widget(Paragraph::new(footer_line(fleet, app)), footer);
 }
 
 fn header_line(fleet: &Fleet, app: &App) -> Line<'static> {
@@ -168,7 +168,20 @@ fn preview_lines(fleet: &Fleet, app: &App, height: u16) -> Vec<Line<'static>> {
     lines
 }
 
-fn footer_line(app: &App) -> Line<'static> {
+fn footer_line(fleet: &Fleet, app: &App) -> Line<'static> {
+    if let Some(pane) = app.confirm_close {
+        let (agent, workspace) = fleet
+            .panes
+            .get(&pane)
+            .map_or(("agent".into(), "-".into()), |p| {
+                (
+                    p.agent.to_lowercase(),
+                    p.workspace.clone().unwrap_or_else(|| "-".into()),
+                )
+            });
+        let question = format!("close %{pane} ({agent} · {workspace})? y/n");
+        return Line::styled(question, Style::new().fg(Color::Black).bg(Color::Yellow));
+    }
     match (&app.flash, &app.reply) {
         (Some(flash), _) => Line::styled(flash.clone(), Style::new().fg(Color::Yellow)),
         (None, Some(_)) => Line::styled("enter send · esc cancel", dim()),
@@ -341,5 +354,27 @@ mod tests {
             .find(|l| l.contains("PR Reviews"))
             .expect("row for pane 22");
         assert!(row.trim_end().ends_with('–'), "{screen}");
+    }
+
+    #[test]
+    fn closing_asks_in_the_footer() {
+        let mut fleet = sample();
+        fleet.set_detected(
+            vec![crate::fleet::testing::detected(1, "PR Reviews", "x")],
+            NOW,
+        );
+        let app = App {
+            confirm_close: Some(1),
+            ..App::default()
+        };
+        let screen = draw(&fleet, &app);
+        assert!(
+            screen
+                .lines()
+                .last()
+                .unwrap()
+                .contains("close %1 (claude · PR Reviews)? y/n"),
+            "{screen}"
+        );
     }
 }

@@ -15,6 +15,8 @@ pub struct App {
     pub flash: Option<String>,
     /// Shown in the header; the login link itself stays out of the UI.
     pub web_url: Option<String>,
+    /// The pane `x` asked about; only `y` next closes it.
+    pub confirm_close: Option<u32>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -35,6 +37,10 @@ impl App {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent, fleet: &Fleet) -> Option<Command> {
+        if let Some(pane) = self.confirm_close.take() {
+            return (key.code == KeyCode::Char('y'))
+                .then_some(Command::Act(Action::Close { pane }));
+        }
         if self.reply.is_some() {
             return self.handle_reply_key(key);
         }
@@ -58,6 +64,10 @@ impl App {
                 None
             }
             KeyCode::Char('w') => Some(Command::OpenWeb),
+            KeyCode::Char('x') => {
+                self.confirm_close = self.selected;
+                None
+            }
             _ => None,
         }
     }
@@ -365,5 +375,40 @@ mod tests {
             press(&mut app, &fleet, &[KeyCode::Char('w')]),
             Some(Command::OpenWeb)
         );
+    }
+
+    #[test]
+    fn x_asks_before_closing_and_only_y_confirms() {
+        let fleet = sample();
+        let mut app = App {
+            selected: Some(3),
+            ..App::default()
+        };
+        assert_eq!(press(&mut app, &fleet, &[KeyCode::Char('x')]), None);
+        assert_eq!(app.confirm_close, Some(3));
+        assert_eq!(
+            press(&mut app, &fleet, &[KeyCode::Char('y')]),
+            Some(Command::Act(Action::Close { pane: 3 }))
+        );
+        assert_eq!(app.confirm_close, None);
+    }
+
+    #[test]
+    fn any_other_key_cancels_closing() {
+        let fleet = sample();
+        for code in [
+            KeyCode::Char('n'),
+            KeyCode::Esc,
+            KeyCode::Char('q'),
+            KeyCode::Enter,
+        ] {
+            let mut app = App {
+                selected: Some(3),
+                ..App::default()
+            };
+            press(&mut app, &fleet, &[KeyCode::Char('x')]);
+            assert_eq!(press(&mut app, &fleet, &[code]), None, "{code:?}");
+            assert_eq!(app.confirm_close, None);
+        }
     }
 }

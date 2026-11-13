@@ -22,6 +22,9 @@ pub enum Sent {
         pane: u32,
         keys: Vec<String>,
     },
+    Close {
+        pane: u32,
+    },
 }
 
 /// In-memory tty7 for tests. `agents: None` makes `agents()` fail like an unreachable server.
@@ -134,6 +137,11 @@ impl Tty7Cli for FakeCli {
 
     async fn activate_gui(&self) -> anyhow::Result<()> {
         *self.activations.lock().unwrap() += 1;
+        Ok(())
+    }
+
+    async fn close_pane(&self, pane: u32) -> anyhow::Result<()> {
+        self.sent.lock().unwrap().push(Sent::Close { pane });
         Ok(())
     }
 
