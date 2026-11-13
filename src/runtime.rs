@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{Notify, mpsc, oneshot, watch};
 use tokio::time::{Instant, MissedTickBehavior, interval_at, sleep, sleep_until};
 use tracing::warn;
 
@@ -110,12 +110,19 @@ pub fn start(cli: Arc<dyn Tty7Cli>) -> Handle {
     let (requests, requests_rx) = mpsc::channel(32);
     let (targets_tx, targets_rx) = watch::channel(HashSet::new());
     let (captured_tx, captured_rx) = mpsc::channel(16);
-    tokio::spawn(capture_worker(cli.clone(), targets_rx, captured_tx));
+    let capture_now = Arc::new(Notify::new());
+    tokio::spawn(capture_worker(
+        cli.clone(),
+        targets_rx,
+        captured_tx,
+        capture_now.clone(),
+    ));
     let (detected_tx, detected_rx) = mpsc::channel(2);
     tokio::spawn(detect_worker(cli.clone(), detected_tx));
     let core = Core {
         cli,
         capture_targets: targets_tx,
+        capture_now,
         fleet: Fleet::default(),
         snapshots: snapshots_tx,
         git_cache: HashMap::new(),
@@ -139,6 +146,8 @@ struct Core {
     cli: Arc<dyn Tty7Cli>,
     /// Watched panes that are still agents; the capture worker polls these.
     capture_targets: watch::Sender<HashSet<u32>>,
+    /// Cuts the capture worker's pause short, so typed keys show up in the mirror right away.
+    capture_now: Arc<Notify>,
     fleet: Fleet,
     snapshots: watch::Sender<Fleet>,
     git_cache: HashMap<String, GitInfo>,
@@ -211,7 +220,11 @@ impl Core {
                         // would flood tty7. Other actions: resync now for a refused action (the
                         // fleet was stale), and again shortly for a sent one, whose effect tty7 may
                         // never announce with an event.
-                        if !matches!(action, Action::Keys { .. }) {
+                        if matches!(action, Action::Keys { .. }) {
+                            if outcome == Outcome::Sent {
+                                self.capture_now.notify_one();
+                            }
+                        } else {
                             self.resync().await;
                             if outcome == Outcome::Sent {
                                 follow_up_at = Some(Instant::now() + RESYNC_AFTER_ACTION);
@@ -364,6 +377,7 @@ async fn capture_worker(
     cli: Arc<dyn Tty7Cli>,
     mut targets: watch::Receiver<HashSet<u32>>,
     captured: mpsc::Sender<Capture>,
+    capture_now: Arc<Notify>,
 ) {
     loop {
         let panes = targets.borrow_and_update().clone();
@@ -383,6 +397,8 @@ async fn capture_worker(
         // back. A new selection cuts the pause short so it shows up right away.
         tokio::select! {
             _ = sleep(PREVIEW_EVERY) => {}
+            // A notification during a capture is kept, so keys typed meanwhile trigger one more round.
+            _ = capture_now.notified() => {}
             changed = targets.changed() => {
                 if changed.is_err() {
                     return;
@@ -656,5 +672,35 @@ mod tests {
         let handle = start(cli.clone());
         handle.activate_gui().await.unwrap();
         assert_eq!(*cli.activations.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn keys_trigger_an_immediate_capture() {
+        let cli = Arc::new(FakeCli::with_agents(AGENTS));
+        cli.captures.lock().unwrap().insert(54, "before".into());
+        let _events = cli.push_event_stream();
+        let handle = start(cli.clone());
+        wait_for(&handle, |f| f.panes.contains_key(&54)).await;
+        handle.watch("test", HashSet::from([54])).await;
+        wait_for(&handle, |f| {
+            f.panes[&54].preview.as_deref() == Some("before")
+        })
+        .await;
+        // Let the worker settle into its pause between rounds.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        cli.captures.lock().unwrap().insert(54, "after".into());
+        let keys = vec![crate::actions::KeyInput::Text("k".into())];
+        let started = std::time::Instant::now();
+        handle.act(Action::Keys { pane: 54, keys }).await;
+        wait_for(&handle, |f| {
+            f.panes[&54].preview.as_deref() == Some("after")
+        })
+        .await;
+        let waited = started.elapsed();
+        assert!(
+            waited < Duration::from_millis(150),
+            "mirror updated after {waited:?}"
+        );
     }
 }
