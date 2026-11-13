@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::{mpsc, oneshot, watch};
-use tokio::time::{Instant, MissedTickBehavior, interval, interval_at, sleep_until};
+use tokio::time::{Instant, MissedTickBehavior, interval_at, sleep, sleep_until};
 use tracing::warn;
 
 use crate::actions::{self, Action, Outcome};
@@ -91,23 +91,35 @@ impl Handle {
 pub fn start(cli: Arc<dyn Tty7Cli>) -> Handle {
     let (snapshots_tx, snapshots) = watch::channel(Fleet::default());
     let (requests, requests_rx) = mpsc::channel(32);
+    let (targets_tx, targets_rx) = watch::channel(HashSet::new());
+    let (captured_tx, captured_rx) = mpsc::channel(16);
+    tokio::spawn(capture_worker(cli.clone(), targets_rx, captured_tx));
     let core = Core {
         cli,
+        capture_targets: targets_tx,
         fleet: Fleet::default(),
         snapshots: snapshots_tx,
         git_cache: HashMap::new(),
         watched: HashMap::new(),
         streaming: false,
     };
-    tokio::spawn(core.run(requests_rx));
+    tokio::spawn(core.run(requests_rx, captured_rx));
     Handle {
         snapshots,
         requests,
     }
 }
 
+/// One finished capture from the worker.
+struct Capture {
+    pane: u32,
+    result: anyhow::Result<String>,
+}
+
 struct Core {
     cli: Arc<dyn Tty7Cli>,
+    /// Watched panes that are still agents; the capture worker polls these.
+    capture_targets: watch::Sender<HashSet<u32>>,
     fleet: Fleet,
     snapshots: watch::Sender<Fleet>,
     git_cache: HashMap<String, GitInfo>,
@@ -116,14 +128,16 @@ struct Core {
 }
 
 impl Core {
-    async fn run(mut self, mut requests: mpsc::Receiver<Request>) {
+    async fn run(
+        mut self,
+        mut requests: mpsc::Receiver<Request>,
+        mut captured: mpsc::Receiver<Capture>,
+    ) {
         let mut events: Option<mpsc::Receiver<String>> = None;
         let mut backoff = FIRST_BACKOFF;
         let mut reconnect_at = Instant::now();
-        let mut preview_tick = interval(PREVIEW_EVERY);
         // Starts one period from now: the first resync happens right after the event stream starts.
         let mut resync_tick = interval_at(Instant::now() + RESYNC_EVERY, RESYNC_EVERY);
-        preview_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
         resync_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
         let mut follow_up_at: Option<Instant> = None;
 
@@ -164,7 +178,7 @@ impl Core {
                     follow_up_at = None;
                     self.resync().await;
                 }
-                _ = preview_tick.tick() => self.refresh_previews().await,
+                Some(capture) = captured.recv() => self.on_capture(capture).await,
                 request = requests.recv() => match request {
                     Some(Request::Action { action, reply }) => {
                         let outcome = actions::execute(self.cli.as_ref(), &self.fleet, &action).await;
@@ -182,6 +196,7 @@ impl Core {
                     }
                     Some(Request::Watch { client, panes }) => {
                         self.watched.insert(client, panes);
+                        self.update_capture_targets();
                     }
                     Some(Request::Procs { pane, reply }) => {
                         let procs = if self.fleet.panes.contains_key(&pane) {
@@ -233,28 +248,37 @@ impl Core {
         self.publish();
     }
 
-    async fn refresh_previews(&mut self) {
-        let panes: HashSet<u32> = self.watched.values().flatten().copied().collect();
-        let mut changed = false;
-        let mut failed = false;
-        for pane in panes {
-            if !self.fleet.panes.contains_key(&pane) {
-                continue;
-            }
-            match self.cli.capture_plain(pane, PREVIEW_LINES).await {
-                Ok(text) => changed |= self.fleet.set_preview(pane, text),
-                Err(err) => {
-                    warn!("capture of %{pane} failed: {err:#}");
-                    failed = true;
+    async fn on_capture(&mut self, capture: Capture) {
+        match capture.result {
+            Ok(text) => {
+                if self.fleet.set_preview(capture.pane, text) {
+                    self.publish();
                 }
             }
+            // A failed capture usually means the pane closed; a resync removes it.
+            Err(err) => {
+                warn!("capture of %{} failed: {err:#}", capture.pane);
+                self.resync().await;
+            }
         }
-        // A failed capture usually means the pane closed; a resync removes it.
-        if failed {
-            self.resync().await;
-        } else if changed {
-            self.publish();
-        }
+    }
+
+    fn update_capture_targets(&self) {
+        let targets: HashSet<u32> = self
+            .watched
+            .values()
+            .flatten()
+            .copied()
+            .filter(|pane| self.fleet.panes.contains_key(pane))
+            .collect();
+        self.capture_targets.send_if_modified(|current| {
+            if *current == targets {
+                false
+            } else {
+                *current = targets;
+                true
+            }
+        });
     }
 
     async fn enrich_git(&mut self) {
@@ -278,6 +302,7 @@ impl Core {
     /// Only notifies views when something they'd render actually changed. tty7 sends a
     /// `pane_facts` event on every spinner frame of an agent's title, so most events change nothing.
     fn publish(&self) {
+        self.update_capture_targets();
         self.snapshots.send_if_modified(|current| {
             if *current == self.fleet {
                 false
@@ -286,6 +311,40 @@ impl Core {
                 true
             }
         });
+    }
+}
+
+/// Captures run here, outside the core loop: a Claude Code pane takes ~300 ms to capture, and
+/// keystrokes must not queue behind that (tty7 itself serves requests in parallel).
+async fn capture_worker(
+    cli: Arc<dyn Tty7Cli>,
+    mut targets: watch::Receiver<HashSet<u32>>,
+    captured: mpsc::Sender<Capture>,
+) {
+    loop {
+        let panes = targets.borrow_and_update().clone();
+        if panes.is_empty() {
+            if targets.changed().await.is_err() {
+                return;
+            }
+            continue;
+        }
+        for pane in panes {
+            let result = cli.capture_plain(pane, PREVIEW_LINES).await;
+            if captured.send(Capture { pane, result }).await.is_err() {
+                return;
+            }
+        }
+        // Pausing after each round, not on a fixed tick, keeps slow captures from running back to
+        // back. A new selection cuts the pause short so it shows up right away.
+        tokio::select! {
+            _ = sleep(PREVIEW_EVERY) => {}
+            changed = targets.changed() => {
+                if changed.is_err() {
+                    return;
+                }
+            }
+        }
     }
 }
 
@@ -467,5 +526,30 @@ mod tests {
 
         assert_eq!(handle.procs(54).await.unwrap().procs.len(), 2);
         assert_eq!(handle.procs(999).await, None);
+    }
+
+    #[tokio::test]
+    async fn keys_do_not_wait_for_slow_captures() {
+        let cli = Arc::new(FakeCli::with_agents(AGENTS));
+        cli.captures.lock().unwrap().insert(54, "a".into());
+        cli.captures.lock().unwrap().insert(56, "b".into());
+        *cli.capture_delay.lock().unwrap() = Duration::from_millis(300);
+        let _events = cli.push_event_stream();
+        let handle = start(cli.clone());
+        wait_for(&handle, |f| f.panes.contains_key(&54)).await;
+        handle.watch("test", HashSet::from([54, 56])).await;
+        wait_for(&handle, |f| f.panes[&54].preview.is_some()).await;
+
+        for _ in 0..5 {
+            let started = std::time::Instant::now();
+            let keys = vec![crate::actions::KeyInput::Text("k".into())];
+            assert_eq!(
+                handle.act(Action::Keys { pane: 54, keys }).await,
+                Outcome::Sent
+            );
+            let waited = started.elapsed();
+            assert!(waited < Duration::from_millis(100), "key waited {waited:?}");
+            tokio::time::sleep(Duration::from_millis(130)).await;
+        }
     }
 }

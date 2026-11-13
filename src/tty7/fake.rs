@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use anyhow::bail;
 use async_trait::async_trait;
@@ -29,6 +30,8 @@ pub struct FakeCli {
     pub sent: Mutex<Vec<Sent>>,
     pub event_streams: Mutex<VecDeque<mpsc::Receiver<String>>>,
     pub procs: Mutex<HashMap<u32, ProcsResponse>>,
+    /// Makes every capture this slow, like a real Claude Code pane (~300 ms).
+    pub capture_delay: Mutex<Duration>,
 }
 
 impl FakeCli {
@@ -61,6 +64,8 @@ impl Tty7Cli for FakeCli {
     }
 
     async fn capture_plain(&self, pane: u32, _tail: u32) -> anyhow::Result<String> {
+        let delay = *self.capture_delay.lock().unwrap();
+        tokio::time::sleep(delay).await;
         let text = self.captures.lock().unwrap().get(&pane).cloned();
         match text {
             Some(text) => Ok(text),
