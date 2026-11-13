@@ -6,3 +6,4 @@ pub mod logging;
 pub mod runtime;
 pub mod tty7;
 pub mod tui;
+pub mod web;
