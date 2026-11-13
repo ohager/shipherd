@@ -12,12 +12,15 @@ use crate::actions::{self, Action, Outcome};
 use crate::fleet::git::{self, GitInfo};
 use crate::fleet::{Connection, Fleet};
 use crate::tty7::Tty7Cli;
+use crate::tty7::detect::{self, DetectedPane};
 use crate::tty7::types::{Event, ProcsResponse, parse_event};
 
 pub const PREVIEW_LINES: u32 = 200;
 const PREVIEW_EVERY: Duration = Duration::from_millis(400);
 /// Also how closed panes disappear: the close event's shape hasn't been recorded yet.
 const RESYNC_EVERY: Duration = Duration::from_secs(10);
+/// One detection pass is ~11 tty7 calls (one per workspace), so it runs less often than resync.
+const DETECT_EVERY: Duration = Duration::from_secs(10);
 /// Claude Code needs a moment to process a keystroke, and tty7 sends no event for a cancelled prompt.
 const RESYNC_AFTER_ACTION: Duration = Duration::from_millis(1500);
 const FIRST_BACKOFF: Duration = Duration::from_secs(1);
@@ -94,6 +97,8 @@ pub fn start(cli: Arc<dyn Tty7Cli>) -> Handle {
     let (targets_tx, targets_rx) = watch::channel(HashSet::new());
     let (captured_tx, captured_rx) = mpsc::channel(16);
     tokio::spawn(capture_worker(cli.clone(), targets_rx, captured_tx));
+    let (detected_tx, detected_rx) = mpsc::channel(2);
+    tokio::spawn(detect_worker(cli.clone(), detected_tx));
     let core = Core {
         cli,
         capture_targets: targets_tx,
@@ -103,7 +108,7 @@ pub fn start(cli: Arc<dyn Tty7Cli>) -> Handle {
         watched: HashMap::new(),
         streaming: false,
     };
-    tokio::spawn(core.run(requests_rx, captured_rx));
+    tokio::spawn(core.run(requests_rx, captured_rx, detected_rx));
     Handle {
         snapshots,
         requests,
@@ -132,6 +137,7 @@ impl Core {
         mut self,
         mut requests: mpsc::Receiver<Request>,
         mut captured: mpsc::Receiver<Capture>,
+        mut detected: mpsc::Receiver<Vec<DetectedPane>>,
     ) {
         let mut events: Option<mpsc::Receiver<String>> = None;
         let mut backoff = FIRST_BACKOFF;
@@ -179,6 +185,11 @@ impl Core {
                     self.resync().await;
                 }
                 Some(capture) = captured.recv() => self.on_capture(capture).await,
+                Some(panes) = detected.recv() => {
+                    self.fleet.set_detected(panes, now_ms());
+                    self.enrich_git().await;
+                    self.publish();
+                }
                 request = requests.recv() => match request {
                     Some(Request::Action { action, reply }) => {
                         let outcome = actions::execute(self.cli.as_ref(), &self.fleet, &action).await;
@@ -311,6 +322,22 @@ impl Core {
                 true
             }
         });
+    }
+}
+
+/// Detection runs outside the core loop for the same reason as captures: it's slow and keystrokes
+/// must not wait for it.
+async fn detect_worker(cli: Arc<dyn Tty7Cli>, detected: mpsc::Sender<Vec<DetectedPane>>) {
+    loop {
+        match detect::detect(cli.as_ref()).await {
+            Ok(panes) => {
+                if detected.send(panes).await.is_err() {
+                    return;
+                }
+            }
+            Err(err) => warn!("detecting agents failed: {err:#}"),
+        }
+        sleep(DETECT_EVERY).await;
     }
 }
 
@@ -550,6 +577,58 @@ mod tests {
             let waited = started.elapsed();
             assert!(waited < Duration::from_millis(100), "key waited {waited:?}");
             tokio::time::sleep(Duration::from_millis(130)).await;
+        }
+    }
+
+    fn with_other_workspaces(cli: &FakeCli) {
+        *cli.workspaces.lock().unwrap() =
+            serde_json::from_str(include_str!("../tests/fixtures/ls.json")).unwrap();
+        *cli.panes.lock().unwrap() =
+            serde_json::from_str(include_str!("../tests/fixtures/panes.json")).unwrap();
+        cli.tabs.lock().unwrap().insert(
+            "bbbbbbbb-0000-0000-0000-000000000002".into(),
+            serde_json::from_str(include_str!("../tests/fixtures/tabs-reviews.json")).unwrap(),
+        );
+    }
+
+    #[tokio::test]
+    async fn agents_from_other_workspaces_appear_without_a_status() {
+        let cli = Arc::new(FakeCli::with_agents(AGENTS));
+        with_other_workspaces(&cli);
+        let _events = cli.push_event_stream();
+        let handle = start(cli.clone());
+
+        // Detection and the first resync race; either order ends with both agents listed.
+        let fleet = wait_for(&handle, |f| {
+            f.panes.contains_key(&22) && f.panes.contains_key(&54)
+        })
+        .await;
+        let pane = &fleet.panes[&22];
+        assert_eq!(pane.workspace.as_deref(), Some("PR Reviews"));
+        assert_eq!(pane.title.as_deref(), Some("Routinen ausführen"));
+        assert!(!pane.has_status);
+        assert_eq!(pane.repo.as_deref(), Some("e2e"));
+    }
+
+    #[tokio::test]
+    async fn keys_do_not_wait_for_slow_detection() {
+        let cli = Arc::new(FakeCli::with_agents(AGENTS));
+        with_other_workspaces(&cli);
+        *cli.detect_delay.lock().unwrap() = Duration::from_millis(400);
+        let _events = cli.push_event_stream();
+        let handle = start(cli.clone());
+        wait_for(&handle, |f| f.panes.contains_key(&54)).await;
+
+        for _ in 0..4 {
+            let started = std::time::Instant::now();
+            let keys = vec![crate::actions::KeyInput::Text("k".into())];
+            assert_eq!(
+                handle.act(Action::Keys { pane: 54, keys }).await,
+                Outcome::Sent
+            );
+            let waited = started.elapsed();
+            assert!(waited < Duration::from_millis(100), "key waited {waited:?}");
+            tokio::time::sleep(Duration::from_millis(150)).await;
         }
     }
 }

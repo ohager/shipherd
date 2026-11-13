@@ -35,6 +35,8 @@ pub struct FakeCli {
     /// Makes every capture this slow, like a real Claude Code pane (~300 ms).
     pub capture_delay: Mutex<Duration>,
     pub workspaces: Mutex<WorkspacesResponse>,
+    /// Makes `workspaces()` (the start of each detection pass) this slow.
+    pub detect_delay: Mutex<Duration>,
     /// Tabs by workspace id; unknown workspaces have none.
     pub tabs: Mutex<HashMap<String, TabsResponse>>,
     pub panes: Mutex<PanesResponse>,
@@ -103,6 +105,8 @@ impl Tty7Cli for FakeCli {
     }
 
     async fn workspaces(&self) -> anyhow::Result<WorkspacesResponse> {
+        let delay = *self.detect_delay.lock().unwrap();
+        tokio::time::sleep(delay).await;
         Ok(self.workspaces.lock().unwrap().clone())
     }
 
