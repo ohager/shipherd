@@ -119,8 +119,11 @@ pub fn start(cli: Arc<dyn Tty7Cli>) -> Handle {
     ));
     let (detected_tx, detected_rx) = mpsc::channel(2);
     tokio::spawn(detect_worker(cli.clone(), detected_tx));
+    let (git_tx, git_rx) = mpsc::unbounded_channel();
     let core = Core {
         cli,
+        git_results: git_tx,
+        git_pending: HashSet::new(),
         capture_targets: targets_tx,
         capture_now,
         fleet: Fleet::default(),
@@ -129,7 +132,7 @@ pub fn start(cli: Arc<dyn Tty7Cli>) -> Handle {
         watched: HashMap::new(),
         streaming: false,
     };
-    tokio::spawn(core.run(requests_rx, captured_rx, detected_rx));
+    tokio::spawn(core.run(requests_rx, captured_rx, detected_rx, git_rx));
     Handle {
         snapshots,
         requests,
@@ -151,6 +154,9 @@ struct Core {
     fleet: Fleet,
     snapshots: watch::Sender<Fleet>,
     git_cache: HashMap<String, GitInfo>,
+    /// Lookups run as separate tasks (two `git` processes each) and report back here.
+    git_results: mpsc::UnboundedSender<(String, GitInfo)>,
+    git_pending: HashSet<String>,
     watched: HashMap<String, HashSet<u32>>,
     streaming: bool,
 }
@@ -161,6 +167,7 @@ impl Core {
         mut requests: mpsc::Receiver<Request>,
         mut captured: mpsc::Receiver<Capture>,
         mut detected: mpsc::Receiver<Vec<DetectedPane>>,
+        mut git_results: mpsc::UnboundedReceiver<(String, GitInfo)>,
     ) {
         let mut events: Option<mpsc::Receiver<String>> = None;
         let mut backoff = FIRST_BACKOFF;
@@ -210,7 +217,13 @@ impl Core {
                 Some(capture) = captured.recv() => self.on_capture(capture).await,
                 Some(panes) = detected.recv() => {
                     self.fleet.set_detected(panes, now_ms());
-                    self.enrich_git().await;
+                    self.enrich_git();
+                    self.publish();
+                }
+                Some((cwd, info)) = git_results.recv() => {
+                    self.git_pending.remove(&cwd);
+                    self.git_cache.insert(cwd, info);
+                    self.enrich_git();
                     self.publish();
                 }
                 request = requests.recv() => match request {
@@ -262,7 +275,7 @@ impl Core {
         match parse_event(line) {
             Ok(Event::PaneFacts(facts)) => {
                 self.fleet.apply_pane_facts(&facts, now_ms());
-                self.enrich_git().await;
+                self.enrich_git();
                 self.publish();
             }
             Ok(Event::Other) => {}
@@ -279,7 +292,7 @@ impl Core {
                 } else {
                     Connection::Reconnecting
                 };
-                self.enrich_git().await;
+                self.enrich_git();
             }
             Err(err) => {
                 warn!("tty7 agents failed: {err:#}");
@@ -322,7 +335,9 @@ impl Core {
         });
     }
 
-    async fn enrich_git(&mut self) {
+    /// Fills in repo and branch from the cache, and starts lookups for unknown directories. Never
+    /// waits for git: a lookup is ~90 ms, and with many agents keystrokes would queue behind them.
+    fn enrich_git(&mut self) {
         let missing: Vec<(u32, String)> = self
             .fleet
             .panes
@@ -331,12 +346,16 @@ impl Core {
             .filter_map(|p| p.cwd.clone().map(|cwd| (p.pane, cwd)))
             .collect();
         for (pane, cwd) in missing {
-            if !self.git_cache.contains_key(&cwd) {
-                let info = git::lookup(&cwd).await;
-                self.git_cache.insert(cwd.clone(), info);
+            if let Some(info) = self.git_cache.get(&cwd) {
+                self.fleet
+                    .set_git(pane, info.repo.clone(), info.branch.clone());
+            } else if self.git_pending.insert(cwd.clone()) {
+                let results = self.git_results.clone();
+                tokio::spawn(async move {
+                    let info = git::lookup(&cwd).await;
+                    let _ = results.send((cwd, info));
+                });
             }
-            let info = self.git_cache[&cwd].clone();
-            self.fleet.set_git(pane, info.repo, info.branch);
         }
     }
 
@@ -453,7 +472,11 @@ mod tests {
         let events = cli.push_event_stream();
         let handle = start(cli.clone());
 
-        let fleet = wait_for(&handle, |f| f.panes.contains_key(&54)).await;
+        // Repo and branch arrive a moment later, from a background git lookup.
+        let fleet = wait_for(&handle, |f| {
+            f.panes.get(&54).is_some_and(|p| p.repo.is_some())
+        })
+        .await;
         assert_eq!(fleet.panes[&54].repo.as_deref(), Some("hermes"));
 
         for line in EVENTS.lines().take(5) {
@@ -633,7 +656,7 @@ mod tests {
 
         // Detection and the first resync race; either order ends with both agents listed.
         let fleet = wait_for(&handle, |f| {
-            f.panes.contains_key(&22) && f.panes.contains_key(&54)
+            f.panes.get(&22).is_some_and(|p| p.repo.is_some()) && f.panes.contains_key(&54)
         })
         .await;
         let pane = &fleet.panes[&22];
