@@ -17,37 +17,49 @@
   </header>
   <div id="banners"></div>
 
-  <main id="board">
-    <section class="column" data-status="waiting"><h2>Needs you</h2><div class="cards"></div></section>
-    <section class="column" data-status="working"><h2>Working</h2><div class="cards"></div></section>
-    <section class="column" data-status="done"><h2>Done</h2><div class="cards"></div></section>
-  </main>
-  <details id="idle"><summary>Idle <span class="count"></span></summary><div class="cards"></div></details>
+  <div id="board-view">
+    <main id="board">
+      <section class="column" data-status="waiting"><h2>Needs you</h2><div class="cards"></div></section>
+      <section class="column" data-status="working"><h2>Working</h2><div class="cards"></div></section>
+      <section class="column" data-status="done"><h2>Done</h2><div class="cards"></div></section>
+    </main>
+    <details id="idle"><summary>Idle <span class="count"></span></summary><div class="cards"></div></details>
+  </div>
 
-  <aside id="detail" hidden>
-    <div class="detail-head">
-      <div><strong id="d-agent"></strong> <span id="d-where"></span></div>
-      <button id="d-close" aria-label="Close">×</button>
-    </div>
-    <dl id="d-facts"></dl>
-    <div id="d-procs"></div>
-    <div id="d-interact-label" hidden>INTERACTING: your keys go to this agent</div>
-    <pre id="d-mirror"></pre>
-    <div class="d-actions">
-      <button id="d-approve" hidden>Approve</button>
-      <button id="d-deny" hidden>Deny</button>
-      <form id="d-reply" hidden><input id="d-reply-text" placeholder="Reply…" autocomplete="off"><button>Send</button></form>
-      <label class="toggle"><input type="checkbox" id="d-interact"> Interact</label>
-      <button id="d-close-pane" class="danger-outline">Close pane…</button>
-    </div>
-    <div id="d-confirm" hidden>
-      <span id="d-confirm-text"></span>
-      <button id="d-confirm-yes" class="danger">Close</button>
-      <button id="d-confirm-no">Cancel</button>
-    </div>
-    <p id="d-result"></p>
-  </aside>
+  <div id="focus" hidden>
+    <nav id="f-list" aria-label="Agents">
+      <button id="f-back" class="link">← Board</button>
+      <div id="f-groups"></div>
+      <p class="hint">↑↓ / j k switch · Esc back</p>
+    </nav>
+    <section id="detail">
+      <div id="d-crumb"></div>
+      <div class="d-head">
+        <h2 id="d-title"></h2>
+        <span id="d-pill" class="pill"></span>
+      </div>
+      <div id="d-meta"></div>
+      <dl id="d-facts"></dl>
+      <div id="d-procs"></div>
+      <div id="d-interact-label" hidden>INTERACTING: your keys go to this agent</div>
+      <pre id="d-mirror"></pre>
+      <div class="d-actions">
+        <button id="d-approve" hidden>Approve</button>
+        <button id="d-deny" hidden>Deny</button>
+        <form id="d-reply" hidden><input id="d-reply-text" placeholder="Reply…" autocomplete="off"><button>Send</button></form>
+        <label class="toggle"><input type="checkbox" id="d-interact"> Interact</label>
+        <button id="d-close-pane" class="danger-outline">Close pane…</button>
+      </div>
+      <div id="d-confirm" hidden>
+        <span id="d-confirm-text"></span>
+        <button id="d-confirm-yes" class="danger">Close</button>
+        <button id="d-confirm-no">Cancel</button>
+      </div>
+      <p id="d-result"></p>
+    </section>
+  </div>
 
+  <script src="/logic.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

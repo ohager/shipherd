@@ -16,6 +16,7 @@ use crate::runtime::Handle;
 const INDEX_HTML: &str = include_str!("assets/index.html");
 const APP_CSS: &str = include_str!("assets/app.css");
 const APP_JS: &str = include_str!("assets/app.js");
+const LOGIC_JS: &str = include_str!("assets/logic.js");
 
 #[derive(Clone)]
 pub struct AppState {
@@ -42,6 +43,15 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/app.css",
             get(|| async { ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], APP_CSS) }),
+        )
+        .route(
+            "/logic.js",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+                    LOGIC_JS,
+                )
+            }),
         )
         .route(
             "/app.js",
@@ -227,5 +237,21 @@ mod tests {
         assert_eq!(send(foreign).await.status(), StatusCode::FORBIDDEN);
         let missing = with_cookie("/ws");
         assert_eq!(send(missing).await.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn serves_the_shared_page_logic() {
+        let res = send(with_cookie("/logic.js")).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        assert!(
+            res.headers()[header::CONTENT_TYPE]
+                .to_str()
+                .unwrap()
+                .starts_with("text/javascript")
+        );
+        assert_eq!(
+            send(get("/logic.js")).await.status(),
+            StatusCode::UNAUTHORIZED
+        );
     }
 }

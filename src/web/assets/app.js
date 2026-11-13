@@ -1,15 +1,14 @@
 "use strict";
 
+const L = window.ShipherdLogic;
 const COLUMNS = ["waiting", "working", "done"];
+const GROUPS = [["waiting", "Needs you"], ["working", "Working"], ["done", "Done"], ["other", "Idle"]];
 const STATUS_LABEL = { waiting: "needs you", working: "working", done: "done", idle: "idle", unknown: "unknown" };
-const NAMED_KEYS = {
-  Enter: "enter", Escape: "escape", Tab: "tab", Backspace: "backspace", Delete: "delete",
-  ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right",
-  Home: "home", End: "end", PageUp: "pageup", PageDown: "pagedown",
-};
 
+// selected: the focused pane (from the address); null shows the board.
 // permissionPrompt: what the selected pane's screen shows; null until its first preview arrives.
-const state = { agents: [], banners: [], selected: null, interacting: false, nextId: 1, ws: null, permissionPrompt: null };
+// loaded: whether the first snapshot has arrived, so a missing pane can be told apart from a closed one.
+const state = { agents: [], banners: [], selected: null, interacting: false, nextId: 1, ws: null, permissionPrompt: null, loaded: false };
 let pendingKeys = [];
 let flushTimer = null;
 
@@ -22,15 +21,19 @@ function el(tag, className, text) {
   return node;
 }
 
-function elapsed(agent) {
-  if (!agent.has_status) return "no status yet";
-  const s = Math.max(0, Math.floor((Date.now() - agent.since_ms) / 1000));
-  const pad = (n) => String(n).padStart(2, "0");
-  const body = s < 60 ? `${s}s`
-    : s < 3600 ? `${Math.floor(s / 60)}m${pad(s % 60)}s`
-    : `${Math.floor(s / 3600)}h${pad(Math.floor((s % 3600) / 60))}m`;
-  return agent.exact ? body : `≥${body}`;
+function badge(workspace) {
+  if (!workspace) return el("span");
+  const node = el("span", "badge", workspace);
+  const { background, color } = L.workspaceColor(workspace);
+  node.style.background = background;
+  node.style.color = color;
+  return node;
 }
+
+// Every agent is "claude", so the task is what tells them apart.
+const displayTitle = (agent) => agent.title || agent.agent;
+const groupOf = (agent) => (COLUMNS.includes(agent.status) ? agent.status : "other");
+const elapsed = (agent) => L.elapsed(agent, Date.now());
 
 function current() {
   return state.agents.find((a) => a.pane === state.selected);
@@ -69,6 +72,7 @@ function receive(msg) {
     case "snapshot":
       state.agents = msg.agents;
       state.banners = msg.banners;
+      state.loaded = true;
       render();
       break;
     case "preview":
@@ -91,17 +95,63 @@ function receive(msg) {
   }
 }
 
-// --- board --------------------------------------------------------------
+// --- navigation ---------------------------------------------------------
+
+/** Opening a pane adds a history entry, so the browser's back button returns to the board.
+ *  Switching between panes in the focus view replaces it instead of piling up entries. */
+function select(pane, { replace = false } = {}) {
+  if (state.selected === pane) return;
+  const url = L.hashForPane(pane) || location.pathname;
+  if (replace) history.replaceState(null, "", url);
+  else history.pushState(null, "", url);
+  applySelection(pane);
+}
+
+function back() {
+  select(null);
+}
+
+function applySelection(pane) {
+  hideCloseConfirm();
+  setInteracting(false, true);
+  state.selected = pane;
+  state.permissionPrompt = null;
+  $("d-mirror").textContent = "";
+  $("d-procs").textContent = "";
+  $("d-result").textContent = "";
+  send({ type: "watch", pane });
+  render();
+}
+
+window.addEventListener("popstate", () => applySelection(L.paneFromHash(location.hash)));
+
+// --- rendering ----------------------------------------------------------
+
+function render() {
+  const waiting = state.agents.filter((a) => a.status === "waiting").length;
+  $("summary").textContent = `${state.agents.length} agents${waiting ? ` · ${waiting} need you` : ""}`;
+  document.title = waiting ? `(${waiting}) shipherd` : "shipherd";
+  $("banners").replaceChildren(...state.banners.map((b) => el("div", "banner", b)));
+
+  const focused = state.selected !== null;
+  $("board-view").hidden = focused;
+  $("focus").hidden = !focused;
+  if (focused) {
+    renderList();
+    renderDetail();
+  } else {
+    renderBoard();
+  }
+}
 
 function card(agent) {
   const node = el("article", `card ${agent.status}`);
   node.dataset.pane = agent.pane;
-  if (agent.pane === state.selected) node.classList.add("selected");
 
   const top = el("div", "card-top");
-  top.append(el("span", "dot"), el("strong", null, agent.agent), el("span", "elapsed", elapsed(agent)));
-  node.append(top, el("div", "where", [agent.workspace, agent.repo, agent.branch].filter(Boolean).join(" · ") || agent.cwd || ""));
-  if (agent.title) node.append(el("div", "title", agent.title));
+  top.append(el("span", "dot"), badge(agent.workspace), el("span", "elapsed", elapsed(agent)));
+  const where = [agent.repo, agent.branch].filter(Boolean).join(" · ") || agent.cwd || "";
+  node.append(top, el("div", "title", displayTitle(agent)), el("div", "where", where));
 
   if (agent.status === "waiting" && agent.can_answer) {
     const row = el("div", "card-actions");
@@ -116,20 +166,77 @@ function card(agent) {
   return node;
 }
 
-function render() {
-  const waiting = state.agents.filter((a) => a.status === "waiting").length;
-  $("summary").textContent = `${state.agents.length} agents${waiting ? ` · ${waiting} need you` : ""}`;
-  document.title = waiting ? `(${waiting}) shipherd` : "shipherd";
-  $("banners").replaceChildren(...state.banners.map((b) => el("div", "banner", b)));
-
+function renderBoard() {
   for (const status of COLUMNS) {
     const column = document.querySelector(`.column[data-status="${status}"] .cards`);
     column.replaceChildren(...state.agents.filter((a) => a.status === status).map(card));
   }
-  const idle = state.agents.filter((a) => !COLUMNS.includes(a.status));
+  const idle = state.agents.filter((a) => groupOf(a) === "other");
   document.querySelector("#idle .count").textContent = `(${idle.length})`;
   document.querySelector("#idle .cards").replaceChildren(...idle.map(card));
-  renderDetail();
+}
+
+function listRow(agent) {
+  const row = el("button", `f-row ${agent.status}`);
+  row.dataset.pane = agent.pane;
+  if (agent.pane === state.selected) {
+    row.classList.add("selected");
+    row.setAttribute("aria-current", "true");
+  }
+  row.append(el("span", "dot"), badge(agent.workspace), el("span", "f-title", displayTitle(agent)));
+  row.onclick = () => select(agent.pane, { replace: true });
+  return row;
+}
+
+function renderList() {
+  const groups = GROUPS.flatMap(([group, label]) => {
+    const agents = state.agents.filter((a) => groupOf(a) === group);
+    if (agents.length === 0) return [];
+    return [el("h3", `f-group ${group}`, label), ...agents.map(listRow)];
+  });
+  $("f-groups").replaceChildren(...groups);
+  const selected = document.querySelector(".f-row.selected");
+  if (selected) selected.scrollIntoView({ block: "nearest" });
+}
+
+function renderDetail() {
+  const agent = current();
+  if (!agent) {
+    $("d-crumb").replaceChildren();
+    $("d-title").textContent = `%${state.selected}`;
+    $("d-pill").textContent = state.loaded ? "PANE CLOSED" : "LOADING";
+    $("d-pill").className = "pill";
+    $("d-meta").textContent = "";
+    $("d-facts").replaceChildren();
+    $("d-approve").hidden = $("d-deny").hidden = $("d-reply").hidden = true;
+    setInteracting(false, false);
+    return;
+  }
+
+  const boardLink = el("button", "link", "Board");
+  boardLink.onclick = back;
+  $("d-crumb").replaceChildren(boardLink, el("span", "sep", "›"), badge(agent.workspace), el("span", "sep", "›"), el("span", null, displayTitle(agent)));
+  $("d-title").textContent = displayTitle(agent);
+  $("d-pill").textContent = pillText(agent);
+  $("d-pill").className = `pill ${agent.status}`;
+  $("d-meta").textContent = [`%${agent.pane}`, agent.agent, agent.repo, agent.branch].filter(Boolean).join(" · ");
+
+  const rows = [
+    ["directory", agent.cwd || "–"],
+    ["command", agent.launch.join(" ") || "–"],
+  ];
+  if (!agent.has_status) rows.unshift(["status", "no status yet (its hooks haven't fired)"]);
+  $("d-facts").replaceChildren(...rows.flatMap(([label, value]) => [el("dt", null, label), el("dd", null, value)]));
+
+  // The server refuses approve/deny on questions anyway; hiding them avoids the confusion.
+  const canAnswer = agent.status === "waiting" && agent.can_answer && state.permissionPrompt !== false;
+  $("d-approve").hidden = $("d-deny").hidden = !canAnswer;
+  $("d-reply").hidden = !(agent.status === "done" || agent.status === "idle");
+}
+
+function pillText(agent) {
+  const label = (STATUS_LABEL[agent.status] || agent.status).toUpperCase();
+  return agent.has_status ? `${label} · ${elapsed(agent)}` : "NO STATUS YET";
 }
 
 // Elapsed times are computed in the page, so the server only sends real changes.
@@ -139,66 +246,8 @@ setInterval(() => {
     if (agent) node.querySelector(".elapsed").textContent = elapsed(agent);
   }
   const agent = current();
-  const cell = $("d-elapsed");
-  if (agent && cell) cell.textContent = elapsed(agent);
+  if (agent) $("d-pill").textContent = pillText(agent);
 }, 1000);
-
-// --- detail panel -------------------------------------------------------
-
-function select(pane) {
-  if (state.selected === pane) return;
-  hideCloseConfirm();
-  setInteracting(false, true);
-  state.selected = pane;
-  state.permissionPrompt = null;
-  $("d-mirror").textContent = "";
-  $("d-procs").textContent = "";
-  $("d-result").textContent = "";
-  send({ type: "watch", pane });
-  render();
-}
-
-function closeDetail() {
-  hideCloseConfirm();
-  setInteracting(false, true);
-  state.selected = null;
-  send({ type: "watch", pane: null });
-  render();
-}
-
-function renderDetail() {
-  $("detail").hidden = state.selected === null;
-  if (state.selected === null) return;
-
-  const agent = current();
-  if (!agent) {
-    $("d-result").textContent = "pane closed";
-    $("d-approve").hidden = $("d-deny").hidden = $("d-reply").hidden = true;
-    setInteracting(false, false);
-    return;
-  }
-
-  $("d-agent").textContent = agent.agent;
-  $("d-where").textContent = [agent.repo, agent.branch].filter(Boolean).join(" · ");
-  const rows = [
-    ["status", agent.has_status ? (STATUS_LABEL[agent.status] || agent.status) : "no status yet (its hooks haven't fired)"],
-    ["workspace", agent.workspace || "–"],
-    ["in state", elapsed(agent), "d-elapsed"],
-    ["directory", agent.cwd || "–"],
-    ["command", agent.launch.join(" ") || "–"],
-    ["task", agent.title || "–"],
-  ];
-  $("d-facts").replaceChildren(...rows.flatMap(([label, value, id]) => {
-    const dd = el("dd", null, value);
-    if (id) dd.id = id;
-    return [el("dt", null, label), dd];
-  }));
-
-  // The server refuses approve/deny on questions anyway; hiding them avoids the confusion.
-  const canAnswer = agent.status === "waiting" && agent.can_answer && state.permissionPrompt !== false;
-  $("d-approve").hidden = $("d-deny").hidden = !canAnswer;
-  $("d-reply").hidden = !(agent.status === "done" || agent.status === "idle");
-}
 
 function showPreview(text) {
   const mirror = $("d-mirror");
@@ -210,7 +259,10 @@ function showPreview(text) {
 function showProcs(msg) {
   const procs = msg.procs.map((p) => (p.foreground ? `${p.name}*` : p.name)).join(", ");
   const ports = msg.ports.map((p) => (p.port !== undefined ? p.port : JSON.stringify(p))).join(", ");
-  $("d-procs").textContent = `processes: ${procs || "–"}   ports: ${ports || "–"}`;
+  // One line on screen; the full list is in the tooltip.
+  const text = `ports: ${ports || "–"}   processes: ${procs || "–"}`;
+  $("d-procs").textContent = text;
+  $("d-procs").title = text;
 }
 
 function act(kind, pane, text) {
@@ -236,7 +288,7 @@ function hideCloseConfirm() {
   $("d-close-pane").hidden = false;
 }
 
-// --- interact mode ------------------------------------------------------
+// --- keyboard -----------------------------------------------------------
 
 function setInteracting(on, notify) {
   const changed = state.interacting !== on;
@@ -247,41 +299,37 @@ function setInteracting(on, notify) {
   if (notify && changed && state.selected !== null) send({ type: "interact", pane: state.selected, on });
 }
 
-function toKey(event) {
-  if (event.key === "Tab" && event.shiftKey) return { kind: "key", value: "backtab" };
-  if (NAMED_KEYS[event.key]) return { kind: "key", value: NAMED_KEYS[event.key] };
-  if ((event.ctrlKey || event.altKey) && !event.metaKey && /^[a-z0-9]$/i.test(event.key)) {
-    return { kind: "key", value: `${event.ctrlKey ? "C" : "M"}-${event.key.toLowerCase()}` };
-  }
-  // Leave browser shortcuts (Cmd+R, Cmd+C, …) alone.
-  if (event.metaKey || event.ctrlKey || event.altKey) return null;
-  if (event.key.length === 1) return { kind: "text", value: event.key };
-  return null;
-}
-
-function mergeText(keys) {
-  const merged = [];
-  for (const key of keys) {
-    const last = merged[merged.length - 1];
-    if (key.kind === "text" && last && last.kind === "text") last.value += key.value;
-    else merged.push({ ...key });
-  }
-  return merged;
-}
-
 // Batches keystrokes so fast typing becomes one message instead of one per key.
 function flushKeys() {
   flushTimer = null;
-  const keys = mergeText(pendingKeys);
+  const keys = L.mergeText(pendingKeys);
   pendingKeys = [];
   if (keys.length && state.interacting && state.selected !== null) {
     send({ type: "keys", pane: state.selected, keys });
   }
 }
 
+function navigate(event) {
+  if (state.selected === null || event.metaKey || event.ctrlKey || event.altKey) return;
+  if (event.target.closest("input, textarea")) return;
+  const delta = { ArrowDown: 1, j: 1, ArrowUp: -1, k: -1 }[event.key];
+  if (delta) {
+    event.preventDefault();
+    const next = L.nextSelection(state.agents, state.selected, delta);
+    if (next !== null) select(next, { replace: true });
+  } else if (event.key === "Escape") {
+    event.preventDefault();
+    back();
+  }
+}
+
 document.addEventListener("keydown", (event) => {
-  if (!state.interacting) return;
-  const key = toKey(event);
+  // While interacting every key, Esc and arrows included, belongs to the agent.
+  if (!state.interacting) {
+    navigate(event);
+    return;
+  }
+  const key = L.toKey(event);
   if (!key) return;
   event.preventDefault();
   pendingKeys.push(key);
@@ -291,7 +339,7 @@ document.addEventListener("keydown", (event) => {
 // --- wiring -------------------------------------------------------------
 
 $("open-tty7").onclick = () => send({ type: "open_tty7" });
-$("d-close").onclick = closeDetail;
+$("f-back").onclick = back;
 $("d-close-pane").onclick = askCloseConfirm;
 $("d-confirm-no").onclick = hideCloseConfirm;
 $("d-confirm-yes").onclick = () => {
@@ -313,4 +361,6 @@ $("d-interact").onchange = (event) => {
   event.target.blur();
 };
 
+state.selected = L.paneFromHash(location.hash);
+render();
 connect();
