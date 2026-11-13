@@ -38,8 +38,9 @@ tty7-server
 - Unknown event kinds or fields: logged and skipped.
 
 ### `fleet` (state)
-- Holds the current set of agent panes: pane id, agent name, status (`idle` / `working` / `waiting` / `done`), status-since timestamp (`since_ms` from tty7), cwd, repo name, git branch, diagnostics, latest preview.
+- Holds the current set of agent panes: pane id, agent name, status (`idle` / `working` / `waiting` / `done`), status-since timestamp, cwd, repo name, git branch, diagnostics, latest preview.
 - Applies events as a pure function: `(state, event) → state`.
+- **Time in state:** tty7 26.10's `agents --json` reports `pane_id` and a nested `state.status` but no status-since timestamp (the docs mention `since_ms`/`for`; the installed version doesn't emit them). shipherd records the time it observes each status change. Agents already in a status when shipherd starts show that time as "since shipherd started" (rendered with a `≥` prefix, e.g. `≥2m`). If a later tty7 version emits a timestamp, the adapter prefers it.
 - Owns ordering for both views: grouped by status in the order **waiting → working → done → idle**, then longest-in-state first within a group.
 - Git branch is read once per cwd (`git rev-parse --abbrev-ref HEAD`) and cached; re-read when a pane's cwd changes. Repo name is the basename of `git rev-parse --show-toplevel`, else the cwd basename.
 - **Watched panes:** the views register which panes they display output for (the TUI's selected row, any open web detail panel). For each watched pane, `capture %N --tail 200` runs about every 400 ms; nothing is polled for unwatched panes. Captures are only published when they change.
