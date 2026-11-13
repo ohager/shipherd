@@ -147,6 +147,9 @@ impl Core {
                 request = requests.recv() => match request {
                     Some(Request::Action { action, reply }) => {
                         let outcome = actions::execute(self.cli.as_ref(), &self.fleet, &action).await;
+                        // tty7 sends no event when a prompt is cancelled, so the fleet would stay
+                        // stale until the next periodic resync.
+                        self.resync().await;
                         let _ = reply.send(outcome);
                     }
                     Some(Request::Watch { client, panes }) => {
@@ -344,6 +347,25 @@ mod tests {
                 enter: false
             }]
         );
+    }
+
+    #[tokio::test]
+    async fn actions_refresh_the_fleet_right_away() {
+        let cli = Arc::new(FakeCli::with_agents(WAITING_54));
+        let _events = cli.push_event_stream();
+        let handle = start(cli.clone());
+        wait_for(&handle, |f| f.panes.contains_key(&54)).await;
+
+        // tty7 sends no event when a prompt is cancelled; only `agents` shows the new status.
+        *cli.agents.lock().unwrap() = Some(
+            serde_json::from_str(
+                r#"{"agents":[{"pane_id":54,"agent":"Claude","state":{"status":"done","cwd":"/tmp/x"}}]}"#,
+            )
+            .unwrap(),
+        );
+        handle.act(Action::Approve { pane: 54 }).await;
+
+        assert_eq!(handle.snapshots.borrow().panes[&54].status, Status::Done);
     }
 
     #[tokio::test]
