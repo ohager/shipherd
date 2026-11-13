@@ -44,6 +44,7 @@ tty7-server
 - Owns ordering for both views: grouped by status in the order **waiting → working → done → idle**, then longest-in-state first within a group.
 - Git branch is read once per cwd (`git rev-parse --abbrev-ref HEAD`) and cached; re-read when a pane's cwd changes. Repo name is the basename of `git rev-parse --show-toplevel`, else the cwd basename.
 - **Watched panes:** the views register which panes they display output for (the TUI's selected row, any open web detail panel). For each watched pane, `capture %N --plain --tail 200` runs about every 400 ms (`--plain`: the raw ANSI capture of a full-screen agent like Claude Code was 3 MB for `--tail 5`, because `--tail` counts raw lines before redraws are applied); nothing is polled for unwatched panes. Captures are only published when they change.
+- **Nothing slow in the core loop:** captures, agent detection and git lookups run in background tasks and report back over channels, so keystrokes never wait for them. After a sent keystroke the capture worker skips its pause, so the mirror shows the change after about one capture (~330 ms for a Claude Code pane).
 - **Periodic resync:** `agents --json` every 10 s, which drops panes that have closed. (The close event's shape hasn't been recorded yet, so removal doesn't depend on it.)
 - Publishes snapshots on a `tokio::sync::watch` channel. Views subscribe and redraw on change. (When `shipherd serve` is split out later, the TUI replaces this channel with the WebSocket client.)
 
@@ -56,15 +57,19 @@ The single path for all input into panes.
 | deny | per-agent key sequence (Claude Code: `escape`, verified 2026-11-13) |
 | reply | `tty7 send %N --stdin --enter` with the text on stdin |
 | keys (interact mode) | `tty7 send %N --key …` |
+| close | `tty7 pane close %N`, always with the explicit pane id (without one, tty7 closes the caller's own pane) |
 
 - **Per-agent key table:** approve/deny are only offered for agents with a known mapping; v1 ships Claude Code only. Its prompt numbers vary ("No" was option 4 in one test), so deny uses Esc rather than a number. Other agents get reply and interact.
 - **Race guard:** before each action, re-fetch `tty7 agents --json` and check the pane's current status. Approve/deny require `waiting`. Reply requires `done` or `idle`: during `waiting` the agent shows a selection menu where typed characters pick options (typing `1` approves), so free text there is unsafe. Otherwise drop the action and report "agent moved on (now …)". Interact-mode keys skip the guard (the user is driving).
+- **Permission prompts only:** tty7 reports questions and permission prompts both as `waiting`. Before approve/deny, the pane's screen is captured; only a Claude Code permission prompt ("Do you want to …?", "1. Yes", no "Tab/Arrow keys to navigate" footer) is answered. Otherwise the action is refused with "that's a question, not a permission prompt". The page also hides approve/deny in the detail panel while a question is showing.
+- **Close:** no status check (closing a working agent is allowed); the views always confirm first. Only agent panes in the fleet can be closed, so shipherd's own pane and plain shells are safe.
 - **Validation:** the pane id must be in the current `fleet`; anything else is rejected.
 - Reply text is never passed as an argument (it would be visible in `ps`).
 
 ### TUI (ratatui)
 - Layout: header (`⛵ shipherd · N agents · M need you`, web URL), a list grouped by status (NEEDS YOU / WORKING / DONE / IDLE) with agent, repo, branch, time in state; a preview of the selected agent's last lines below; a key-hint footer.
-- Keys: `↑/↓` or `j/k` select, `y` approve, `n` deny, `r` reply (inline input line, Enter sends, Esc cancels), `w` open the web dashboard in the browser (URL includes the token), `q` quit.
+- Keys: `↑/↓` or `j/k` select, `y` approve, `n` deny, `r` reply (inline input line, Enter sends, Esc cancels), `x` close (footer asks "close %N (agent · workspace)? y/n"; only `y` confirms, any other key cancels), `w` open the web dashboard in the browser (URL includes the token), `q` quit.
+- The list scrolls to keep the selected agent visible. In narrow panes columns drop out in this order: branch, workspace, repo; agent and time always show. The header leaves out the URL rather than cutting it, and the key hints shorten.
 - Banners for: hooks not installed (with the agent name from diagnostics), tty7 server unreachable, reconnecting.
 
 ### Web (axum)
