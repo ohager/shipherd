@@ -1,6 +1,6 @@
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::actions::{self, Action, Outcome};
+use crate::actions::{self, Action};
 use crate::fleet::Fleet;
 use crate::tty7::types::Status;
 
@@ -144,20 +144,6 @@ impl App {
                 ))
             }
         }
-    }
-}
-
-/// Footer text for an action's result; `None` when there's nothing worth saying.
-pub fn describe(outcome: &Outcome) -> Option<String> {
-    match outcome {
-        Outcome::Sent => None,
-        Outcome::NotReady {
-            status: Some(status),
-        } => Some(format!("agent moved on (now {})", status.label())),
-        Outcome::NotReady { status: None } => Some("agent is gone".into()),
-        Outcome::UnknownPane => Some("that pane is gone".into()),
-        Outcome::Unsupported => Some("not supported for this agent".into()),
-        Outcome::Failed(err) => Some(format!("failed: {err}")),
     }
 }
 
@@ -365,21 +351,5 @@ mod tests {
         );
         let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
         assert_eq!(app.handle_key(ctrl_c, &fleet), Some(Command::Quit));
-    }
-
-    #[test]
-    fn describes_outcomes() {
-        assert_eq!(describe(&Outcome::Sent), None);
-        assert_eq!(
-            describe(&Outcome::NotReady {
-                status: Some(Status::Working)
-            })
-            .as_deref(),
-            Some("agent moved on (now working)")
-        );
-        assert_eq!(
-            describe(&Outcome::NotReady { status: None }).as_deref(),
-            Some("agent is gone")
-        );
     }
 }

@@ -1,20 +1,37 @@
 //! The only code path that types into panes.
 
+use serde::Deserialize;
+
 use crate::fleet::Fleet;
 use crate::tty7::Tty7Cli;
 use crate::tty7::types::Status;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
-    Approve { pane: u32 },
-    Deny { pane: u32 },
-    Reply { pane: u32, text: String },
+    Approve {
+        pane: u32,
+    },
+    Deny {
+        pane: u32,
+    },
+    Reply {
+        pane: u32,
+        text: String,
+    },
+    /// Interact mode: raw keystrokes, no status check (the user is driving).
+    Keys {
+        pane: u32,
+        keys: Vec<KeyInput>,
+    },
 }
 
 impl Action {
     pub fn pane(&self) -> u32 {
         match self {
-            Action::Approve { pane } | Action::Deny { pane } | Action::Reply { pane, .. } => *pane,
+            Action::Approve { pane }
+            | Action::Deny { pane }
+            | Action::Reply { pane, .. }
+            | Action::Keys { pane, .. } => *pane,
         }
     }
 }
@@ -28,7 +45,100 @@ pub enum Outcome {
     },
     UnknownPane,
     Unsupported,
+    /// The request itself was invalid (unknown key name, control characters in text).
+    Rejected(String),
     Failed(String),
+}
+
+impl Outcome {
+    /// One-line explanation for the views; `None` when there's nothing worth saying.
+    pub fn message(&self) -> Option<String> {
+        match self {
+            Outcome::Sent => None,
+            Outcome::NotReady {
+                status: Some(status),
+            } => Some(format!("agent moved on (now {})", status.label())),
+            Outcome::NotReady { status: None } => Some("agent is gone".into()),
+            Outcome::UnknownPane => Some("that pane is gone".into()),
+            Outcome::Unsupported => Some("not supported for this agent".into()),
+            Outcome::Rejected(reason) => Some(format!("rejected: {reason}")),
+            Outcome::Failed(err) => Some(format!("failed: {err}")),
+        }
+    }
+}
+
+/// One keystroke group from the browser: literal text, or a key name tty7 understands.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum KeyInput {
+    Text(String),
+    Key(String),
+}
+
+const NAMED_KEYS: &[&str] = &[
+    "enter",
+    "escape",
+    "tab",
+    "backtab",
+    "space",
+    "backspace",
+    "delete",
+    "up",
+    "down",
+    "right",
+    "left",
+    "home",
+    "end",
+    "pageup",
+    "pagedown",
+];
+const MAX_TEXT: usize = 4096;
+
+/// Control characters must arrive as named keys, so text can't smuggle in escape sequences.
+fn validate(keys: &[KeyInput]) -> Result<(), String> {
+    if keys.is_empty() {
+        return Err("no keys".into());
+    }
+    for key in keys {
+        match key {
+            KeyInput::Text(text) => {
+                if text.is_empty() || text.len() > MAX_TEXT || text.chars().any(char::is_control) {
+                    return Err("invalid text".into());
+                }
+            }
+            KeyInput::Key(name) => {
+                if !(NAMED_KEYS.contains(&name.as_str()) || is_modified_key(name)) {
+                    return Err(format!("unknown key {name}"));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `C-x` (Ctrl) or `M-x` (Alt) with a single ASCII letter or digit.
+fn is_modified_key(name: &str) -> bool {
+    let mut chars = name.chars();
+    matches!(
+        (chars.next(), chars.next(), chars.next(), chars.next()),
+        (Some('C' | 'M'), Some('-'), Some(c), None) if c.is_ascii_alphanumeric()
+    )
+}
+
+async fn send_interactive(cli: &dyn Tty7Cli, pane: u32, keys: &[KeyInput]) -> Outcome {
+    if let Err(reason) = validate(keys) {
+        return Outcome::Rejected(reason);
+    }
+    for key in keys {
+        let result = match key {
+            KeyInput::Text(text) => cli.send_text(pane, text, false).await,
+            KeyInput::Key(name) => cli.send_keys(pane, &[name.as_str()]).await,
+        };
+        if let Err(err) = result {
+            return Outcome::Failed(err.to_string());
+        }
+    }
+    Outcome::Sent
 }
 
 enum Keystrokes {
@@ -59,6 +169,7 @@ fn allowed_statuses(action: &Action) -> &'static [Status] {
     match action {
         Action::Approve { .. } | Action::Deny { .. } => &[Status::Waiting],
         Action::Reply { .. } => &[Status::Done, Status::Idle],
+        Action::Keys { .. } => &[],
     }
 }
 
@@ -74,6 +185,7 @@ pub async fn execute(cli: &dyn Tty7Cli, fleet: &Fleet, action: &Action) -> Outco
             text: text.clone(),
             enter: true,
         }),
+        Action::Keys { keys, .. } => return send_interactive(cli, pane, keys).await,
     };
     let Some(keystrokes) = keystrokes else {
         return Outcome::Unsupported;
@@ -224,5 +336,89 @@ mod tests {
         let fleet = fleet_with(&[(54, "Claude", Status::Waiting, 0)]);
         let outcome = execute(&cli, &fleet, &Action::Approve { pane: 54 }).await;
         assert!(matches!(outcome, Outcome::Failed(_)), "{outcome:?}");
+    }
+
+    #[tokio::test]
+    async fn keys_are_sent_in_order_without_a_status_check() {
+        let cli = tty7_reports(54, "Claude", "working");
+        let fleet = fleet_with(&[(54, "Claude", Status::Working, 0)]);
+        let action = Action::Keys {
+            pane: 54,
+            keys: vec![
+                KeyInput::Text("ls".into()),
+                KeyInput::Key("enter".into()),
+                KeyInput::Key("C-c".into()),
+            ],
+        };
+        assert_eq!(execute(&cli, &fleet, &action).await, Outcome::Sent);
+        assert_eq!(
+            cli.sent(),
+            vec![
+                Sent::Text {
+                    pane: 54,
+                    text: "ls".into(),
+                    enter: false
+                },
+                Sent::Keys {
+                    pane: 54,
+                    keys: vec!["enter".into()]
+                },
+                Sent::Keys {
+                    pane: 54,
+                    keys: vec!["C-c".into()]
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_keys_are_rejected_before_anything_is_sent() {
+        let cli = tty7_reports(54, "Claude", "working");
+        let fleet = fleet_with(&[(54, "Claude", Status::Working, 0)]);
+        for keys in [
+            vec![KeyInput::Text("ok".into()), KeyInput::Key("rm -rf".into())],
+            vec![KeyInput::Text("line\nbreak".into())],
+            vec![KeyInput::Key("C-ctrl".into())],
+            vec![],
+        ] {
+            let outcome = execute(&cli, &fleet, &Action::Keys { pane: 54, keys }).await;
+            assert!(matches!(outcome, Outcome::Rejected(_)), "{outcome:?}");
+        }
+        assert!(cli.sent().is_empty());
+    }
+
+    #[test]
+    fn key_input_uses_the_browser_json_shape() {
+        let keys: Vec<KeyInput> = serde_json::from_str(
+            r#"[{"kind":"text","value":"hi"},{"kind":"key","value":"enter"}]"#,
+        )
+        .unwrap();
+        assert_eq!(
+            keys,
+            vec![KeyInput::Text("hi".into()), KeyInput::Key("enter".into())]
+        );
+    }
+
+    #[test]
+    fn outcomes_explain_themselves() {
+        assert_eq!(Outcome::Sent.message(), None);
+        assert_eq!(
+            Outcome::NotReady {
+                status: Some(Status::Working)
+            }
+            .message()
+            .as_deref(),
+            Some("agent moved on (now working)")
+        );
+        assert_eq!(
+            Outcome::NotReady { status: None }.message().as_deref(),
+            Some("agent is gone")
+        );
+        assert_eq!(
+            Outcome::Rejected("unknown key x".into())
+                .message()
+                .as_deref(),
+            Some("rejected: unknown key x")
+        );
     }
 }

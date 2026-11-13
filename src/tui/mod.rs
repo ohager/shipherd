@@ -53,7 +53,7 @@ async fn event_loop(terminal: &mut DefaultTerminal, handle: Handle) -> anyhow::R
                     Some(Command::Quit) => return Ok(()),
                     Some(Command::Act(action)) => {
                         let outcome = handle.act(action).await;
-                        app.flash = app::describe(&outcome);
+                        app.flash = outcome.message();
                     }
                     None => {}
                 }

@@ -168,11 +168,15 @@ impl Core {
                 request = requests.recv() => match request {
                     Some(Request::Action { action, reply }) => {
                         let outcome = actions::execute(self.cli.as_ref(), &self.fleet, &action).await;
-                        // Now for a refused action (the fleet was stale), and again shortly for a
-                        // sent one, whose effect tty7 may never announce with an event.
-                        self.resync().await;
-                        if outcome == Outcome::Sent {
-                            follow_up_at = Some(Instant::now() + RESYNC_AFTER_ACTION);
+                        // Interact mode sends several key batches a second; resyncing after each
+                        // would flood tty7. Other actions: resync now for a refused action (the
+                        // fleet was stale), and again shortly for a sent one, whose effect tty7 may
+                        // never announce with an event.
+                        if !matches!(action, Action::Keys { .. }) {
+                            self.resync().await;
+                            if outcome == Outcome::Sent {
+                                follow_up_at = Some(Instant::now() + RESYNC_AFTER_ACTION);
+                            }
                         }
                         let _ = reply.send(outcome);
                     }
