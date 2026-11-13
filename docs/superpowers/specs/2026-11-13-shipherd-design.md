@@ -91,7 +91,7 @@ Interact mode can type into shells, so the web server is treated as a local remo
 | Situation | Behaviour |
 |---|---|
 | `tty7` not on PATH | exit with a clear message and an install link |
-| tty7 server unreachable | banner; retry every 2 s |
+| tty7 server unreachable | banner; retried on the event-stream backoff (1 s → 30 s) and the 10 s resync |
 | `events` child exits | restart with exponential backoff (1 s → 30 s cap), "reconnecting" banner, full resync via `agents --json` on recovery |
 | status hooks not installed | banner pointing to Settings → Integrations; agents still listed |
 | `capture` / `send` fails because the pane is gone | remove the pane from `fleet`; detail panel shows "pane closed" |
