@@ -18,6 +18,9 @@ pub struct AgentView {
     pub cwd: Option<String>,
     pub title: Option<String>,
     pub launch: Vec<String>,
+    pub workspace: Option<String>,
+    /// False until the agent's hooks report a status; the page shows "no status yet".
+    pub has_status: bool,
     /// Whether approve/deny are supported for this agent.
     pub can_answer: bool,
 }
@@ -35,6 +38,8 @@ impl From<&AgentPane> for AgentView {
             cwd: p.cwd.clone(),
             title: p.title.clone(),
             launch: p.launch.clone(),
+            workspace: p.workspace.clone(),
+            has_status: p.has_status,
             can_answer: actions::supports_prompt_answers(&p.agent),
         }
     }
@@ -140,5 +145,17 @@ mod tests {
         let msg: ClientMsg = serde_json::from_str(r#"{"type":"watch"}"#).unwrap();
         assert_eq!(msg, ClientMsg::Watch { pane: None });
         assert!(serde_json::from_str::<ClientMsg>(r#"{"type":"rm"}"#).is_err());
+    }
+
+    #[test]
+    fn agent_view_carries_workspace_and_whether_status_is_known() {
+        let mut fleet = fleet_with(&[]);
+        fleet.set_detected(
+            vec![crate::fleet::testing::detected(22, "PR Reviews", "x")],
+            0,
+        );
+        let view = AgentView::from(&fleet.panes[&22]);
+        assert_eq!(view.workspace.as_deref(), Some("PR Reviews"));
+        assert!(!view.has_status);
     }
 }

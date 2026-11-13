@@ -104,13 +104,19 @@ fn list_lines(fleet: &Fleet, app: &App, now_ms: u64) -> Vec<Line<'static>> {
 }
 
 fn agent_line(pane: &AgentPane, selected: bool, now_ms: u64) -> Line<'static> {
-    let elapsed = format_elapsed(
-        now_ms.saturating_sub(pane.status_since_ms),
-        pane.since_exact,
-    );
+    // Without a reported status, the time since shipherd first saw the agent means nothing.
+    let elapsed = if pane.has_status {
+        format_elapsed(
+            now_ms.saturating_sub(pane.status_since_ms),
+            pane.since_exact,
+        )
+    } else {
+        "–".to_string()
+    };
     let text = format!(
-        " {:<7} {:<12} {:<14} {:>7}",
+        " {:<7} {:<12} {:<12} {:<14} {:>7}",
         fit(&pane.agent.to_lowercase(), 7),
+        fit(pane.workspace.as_deref().unwrap_or("-"), 12),
         fit(pane.repo.as_deref().unwrap_or("-"), 12),
         fit(pane.branch.as_deref().unwrap_or("-"), 14),
         elapsed
@@ -320,5 +326,20 @@ mod tests {
                 .contains("http://127.0.0.1:7777"),
             "{screen}"
         );
+    }
+
+    #[test]
+    fn rows_show_the_workspace_and_no_time_without_a_status() {
+        let mut fleet = sample();
+        fleet.set_detected(
+            vec![crate::fleet::testing::detected(22, "PR Reviews", "x")],
+            NOW - 5_000,
+        );
+        let screen = draw(&fleet, &App::default());
+        let row = screen
+            .lines()
+            .find(|l| l.contains("PR Reviews"))
+            .expect("row for pane 22");
+        assert!(row.trim_end().ends_with('–'), "{screen}");
     }
 }

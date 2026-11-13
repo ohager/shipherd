@@ -22,6 +22,7 @@ function el(tag, className, text) {
 }
 
 function elapsed(agent) {
+  if (!agent.has_status) return "no status yet";
   const s = Math.max(0, Math.floor((Date.now() - agent.since_ms) / 1000));
   const pad = (n) => String(n).padStart(2, "0");
   const body = s < 60 ? `${s}s`
@@ -86,7 +87,7 @@ function card(agent) {
 
   const top = el("div", "card-top");
   top.append(el("span", "dot"), el("strong", null, agent.agent), el("span", "elapsed", elapsed(agent)));
-  node.append(top, el("div", "where", [agent.repo, agent.branch].filter(Boolean).join(" · ") || agent.cwd || ""));
+  node.append(top, el("div", "where", [agent.workspace, agent.repo, agent.branch].filter(Boolean).join(" · ") || agent.cwd || ""));
   if (agent.title) node.append(el("div", "title", agent.title));
 
   if (agent.status === "waiting" && agent.can_answer) {
@@ -164,7 +165,8 @@ function renderDetail() {
   $("d-agent").textContent = agent.agent;
   $("d-where").textContent = [agent.repo, agent.branch].filter(Boolean).join(" · ");
   const rows = [
-    ["status", STATUS_LABEL[agent.status] || agent.status],
+    ["status", agent.has_status ? (STATUS_LABEL[agent.status] || agent.status) : "no status yet (its hooks haven't fired)"],
+    ["workspace", agent.workspace || "–"],
     ["in state", elapsed(agent), "d-elapsed"],
     ["directory", agent.cwd || "–"],
     ["command", agent.launch.join(" ") || "–"],
