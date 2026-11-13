@@ -52,6 +52,13 @@ function connect() {
   };
 }
 
+let noticeTimer = null;
+function showNotice(text) {
+  $("notice").textContent = text;
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => { $("notice").textContent = ""; }, 5000);
+}
+
 function send(msg) {
   if (state.ws && state.ws.readyState === WebSocket.OPEN) state.ws.send(JSON.stringify(msg));
 }
@@ -71,6 +78,7 @@ function receive(msg) {
       break;
     case "action_result":
       $("d-result").textContent = msg.ok ? "" : (msg.message || "failed");
+      if (!msg.ok && state.selected === null) showNotice(msg.message || "failed");
       break;
     case "interact":
       if (msg.pane === state.selected) setInteracting(msg.on, false);
@@ -256,6 +264,7 @@ document.addEventListener("keydown", (event) => {
 
 // --- wiring -------------------------------------------------------------
 
+$("open-tty7").onclick = () => send({ type: "open_tty7" });
 $("d-close").onclick = closeDetail;
 $("d-approve").onclick = () => act("approve", state.selected);
 $("d-deny").onclick = () => act("deny", state.selected);

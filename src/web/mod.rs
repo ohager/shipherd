@@ -184,4 +184,17 @@ mod tests {
             }]
         );
     }
+
+    #[tokio::test]
+    async fn the_page_can_bring_tty7_to_the_front() {
+        let (cli, _server, mut ws, _events) = setup().await;
+        send(&mut ws, serde_json::json!({"type": "open_tty7"})).await;
+        for _ in 0..50 {
+            if *cli.activations.lock().unwrap() == 1 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("tty7 was not activated");
+    }
 }

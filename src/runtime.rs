@@ -48,6 +48,9 @@ pub enum Request {
         pane: u32,
         reply: oneshot::Sender<Option<ProcsResponse>>,
     },
+    ActivateGui {
+        reply: oneshot::Sender<anyhow::Result<()>>,
+    },
 }
 
 /// What a view holds: the latest snapshot and a way to send requests.
@@ -73,6 +76,17 @@ impl Handle {
     }
 
     /// `None` when the pane isn't a known agent or tty7 failed.
+    /// tty7 can't focus a given pane from outside, so this only brings its window to the front.
+    pub async fn activate_gui(&self) -> anyhow::Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.requests
+            .send(Request::ActivateGui { reply: tx })
+            .await
+            .map_err(|_| anyhow::anyhow!("shipherd core stopped"))?;
+        rx.await
+            .map_err(|_| anyhow::anyhow!("shipherd core stopped"))?
+    }
+
     pub async fn procs(&self, pane: u32) -> Option<ProcsResponse> {
         let (tx, rx) = oneshot::channel();
         self.requests
@@ -208,6 +222,9 @@ impl Core {
                     Some(Request::Watch { client, panes }) => {
                         self.watched.insert(client, panes);
                         self.update_capture_targets();
+                    }
+                    Some(Request::ActivateGui { reply }) => {
+                        let _ = reply.send(self.cli.activate_gui().await);
                     }
                     Some(Request::Procs { pane, reply }) => {
                         let procs = if self.fleet.panes.contains_key(&pane) {
@@ -630,5 +647,14 @@ mod tests {
             assert!(waited < Duration::from_millis(100), "key waited {waited:?}");
             tokio::time::sleep(Duration::from_millis(150)).await;
         }
+    }
+
+    #[tokio::test]
+    async fn activates_the_tty7_window() {
+        let cli = Arc::new(FakeCli::with_agents(AGENTS));
+        let _events = cli.push_event_stream();
+        let handle = start(cli.clone());
+        handle.activate_gui().await.unwrap();
+        assert_eq!(*cli.activations.lock().unwrap(), 1);
     }
 }

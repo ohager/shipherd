@@ -103,6 +103,8 @@ pub enum ClientMsg {
         pane: u32,
         keys: Vec<KeyInput>,
     },
+    /// Brings the tty7 window to the front.
+    OpenTty7,
 }
 
 #[cfg(test)]
@@ -157,5 +159,11 @@ mod tests {
         let view = AgentView::from(&fleet.panes[&22]);
         assert_eq!(view.workspace.as_deref(), Some("PR Reviews"));
         assert!(!view.has_status);
+    }
+
+    #[test]
+    fn open_tty7_parses() {
+        let msg: ClientMsg = serde_json::from_str(r#"{"type":"open_tty7"}"#).unwrap();
+        assert_eq!(msg, ClientMsg::OpenTty7);
     }
 }

@@ -71,6 +71,12 @@ async fn session_loop(socket: &mut WebSocket, handle: &Handle, client: &str) -> 
                             let ok = outcome == Outcome::Sent;
                             send(socket, &ServerMsg::ActionResult { id, ok, message: outcome.message() }).await?;
                         }
+                        Effect::OpenTty7 => {
+                            if let Err(err) = handle.activate_gui().await {
+                                let message = Some(format!("couldn't open tty7: {err}"));
+                                send(socket, &ServerMsg::ActionResult { id: 0, ok: false, message }).await?;
+                            }
+                        }
                         Effect::Keys { pane, keys } => {
                             let outcome = handle.act(Action::Keys { pane, keys }).await;
                             if outcome != Outcome::Sent {

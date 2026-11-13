@@ -14,6 +14,7 @@ pub enum Effect {
     Act { id: u64, action: Action },
     Keys { pane: u32, keys: Vec<KeyInput> },
     Send(ServerMsg),
+    OpenTty7,
 }
 
 #[derive(Default)]
@@ -64,6 +65,7 @@ impl Session {
                     vec![Effect::Send(ServerMsg::Interact { pane, on: false })]
                 }
             }
+            ClientMsg::OpenTty7 => vec![Effect::OpenTty7],
             ClientMsg::Keys { pane, keys } => match self.interact {
                 Some((p, last)) if p == pane && now.duration_since(last) < INTERACT_IDLE => {
                     self.interact = Some((pane, now));
@@ -296,6 +298,15 @@ mod tests {
             session
                 .updates(&closed, now)
                 .contains(&ServerMsg::Interact { pane: 1, on: false })
+        );
+    }
+
+    #[test]
+    fn open_tty7_becomes_an_effect() {
+        let mut session = Session::default();
+        assert_eq!(
+            session.on_client(ClientMsg::OpenTty7, Instant::now()),
+            vec![Effect::OpenTty7]
         );
     }
 }

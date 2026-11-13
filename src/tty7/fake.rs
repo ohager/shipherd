@@ -40,6 +40,7 @@ pub struct FakeCli {
     /// Tabs by workspace id; unknown workspaces have none.
     pub tabs: Mutex<HashMap<String, TabsResponse>>,
     pub panes: Mutex<PanesResponse>,
+    pub activations: Mutex<u32>,
 }
 
 impl FakeCli {
@@ -122,6 +123,11 @@ impl Tty7Cli for FakeCli {
 
     async fn panes(&self) -> anyhow::Result<PanesResponse> {
         Ok(self.panes.lock().unwrap().clone())
+    }
+
+    async fn activate_gui(&self) -> anyhow::Result<()> {
+        *self.activations.lock().unwrap() += 1;
+        Ok(())
     }
 
     fn spawn_events(&self) -> anyhow::Result<mpsc::Receiver<String>> {

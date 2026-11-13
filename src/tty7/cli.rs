@@ -119,6 +119,10 @@ impl Tty7Cli for RealCli {
         Ok(serde_json::from_slice(&out)?)
     }
 
+    async fn activate_gui(&self) -> anyhow::Result<()> {
+        Self::run(&[], None).await.map(|_| ())
+    }
+
     fn spawn_events(&self) -> anyhow::Result<mpsc::Receiver<String>> {
         let mut child = Command::new("tty7")
             .args(["events", "--json"])
