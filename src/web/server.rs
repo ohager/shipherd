@@ -52,6 +52,7 @@ pub fn router(state: AppState) -> Router {
                 )
             }),
         )
+        .route("/ws", get(super::socket::upgrade))
         .layer(middleware::from_fn_with_state(state.clone(), guard))
         .with_state(state)
 }
@@ -216,5 +217,15 @@ mod tests {
                 .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn websocket_requires_the_cookie_and_our_origin() {
+        let no_cookie = get("/ws").header(header::ORIGIN, format!("http://127.0.0.1:{PORT}"));
+        assert_eq!(send(no_cookie).await.status(), StatusCode::UNAUTHORIZED);
+        let foreign = with_cookie("/ws").header(header::ORIGIN, "https://evil.example");
+        assert_eq!(send(foreign).await.status(), StatusCode::FORBIDDEN);
+        let missing = with_cookie("/ws");
+        assert_eq!(send(missing).await.status(), StatusCode::FORBIDDEN);
     }
 }
