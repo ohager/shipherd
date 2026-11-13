@@ -43,7 +43,8 @@ tty7-server
 - **Time in state:** tty7 26.10's `agents --json` reports `pane_id` and a nested `state.status` but no status-since timestamp (the docs mention `since_ms`/`for`; the installed version doesn't emit them). shipherd records the time it observes each status change. Agents already in a status when shipherd starts show that time as "since shipherd started" (rendered with a `≥` prefix, e.g. `≥2m`). If a later tty7 version emits a timestamp, the adapter prefers it.
 - Owns ordering for both views: grouped by status in the order **waiting → working → done → idle**, then longest-in-state first within a group.
 - Git branch is read once per cwd (`git rev-parse --abbrev-ref HEAD`) and cached; re-read when a pane's cwd changes. Repo name is the basename of `git rev-parse --show-toplevel`, else the cwd basename.
-- **Watched panes:** the views register which panes they display output for (the TUI's selected row, any open web detail panel). For each watched pane, `capture %N --tail 200` runs about every 400 ms; nothing is polled for unwatched panes. Captures are only published when they change.
+- **Watched panes:** the views register which panes they display output for (the TUI's selected row, any open web detail panel). For each watched pane, `capture %N --plain --tail 200` runs about every 400 ms (`--plain`: the raw ANSI capture of a full-screen agent like Claude Code was 3 MB for `--tail 5`, because `--tail` counts raw lines before redraws are applied); nothing is polled for unwatched panes. Captures are only published when they change.
+- **Periodic resync:** `agents --json` every 10 s, which drops panes that have closed. (The close event's shape hasn't been recorded yet, so removal doesn't depend on it.)
 - Publishes snapshots on a `tokio::sync::watch` channel. Views subscribe and redraw on change. (When `shipherd serve` is split out later, the TUI replaces this channel with the WebSocket client.)
 
 ### `actions`
@@ -51,13 +52,13 @@ The single path for all input into panes.
 
 | Action | Effect |
 |---|---|
-| approve | per-agent key sequence (Claude Code: `1`) |
-| deny | per-agent key sequence (Claude Code: `escape`) |
+| approve | per-agent key sequence (Claude Code: `1`, verified 2026-11-13) |
+| deny | per-agent key sequence (Claude Code: `escape`, verified 2026-11-13) |
 | reply | `tty7 send %N --stdin --enter` with the text on stdin |
 | keys (interact mode) | `tty7 send %N --key …` |
 
-- **Per-agent key table:** approve/deny are only offered for agents with a known mapping; v1 ships Claude Code only, with the keys confirmed against a real Claude Code permission prompt before they're hard-coded. Other agents get reply and interact.
-- **Race guard:** before approve, deny or reply, re-fetch `tty7 agents --json` and confirm the pane is still `waiting`. If not, drop the action and report "agent moved on". Interact-mode keys skip the guard (the user is driving).
+- **Per-agent key table:** approve/deny are only offered for agents with a known mapping; v1 ships Claude Code only. Its prompt numbers vary ("No" was option 4 in one test), so deny uses Esc rather than a number. Other agents get reply and interact.
+- **Race guard:** before each action, re-fetch `tty7 agents --json` and check the pane's current status. Approve/deny require `waiting`. Reply requires `done` or `idle`: during `waiting` the agent shows a selection menu where typed characters pick options (typing `1` approves), so free text there is unsafe. Otherwise drop the action and report "agent moved on (now …)". Interact-mode keys skip the guard (the user is driving).
 - **Validation:** the pane id must be in the current `fleet`; anything else is rejected.
 - Reply text is never passed as an argument (it would be visible in `ps`).
 
@@ -70,7 +71,7 @@ The single path for all input into panes.
 - Bound to `127.0.0.1` only. Port 7777 by default (`--port`); if it's busy, falls back to a port picked by the OS. The actual URL is shown in the TUI header.
 - Frontend: hand-written HTML/CSS/JS (no build step), embedded in the binary.
 - **Board:** kanban columns NEEDS YOU / WORKING / DONE (idle agents in a collapsed row underneath). Cards show agent, repo · branch, time in state, a few preview lines; NEEDS YOU cards have Approve/Deny buttons when supported.
-- **Detail panel** (opened by clicking a card): live output mirror (ANSI converted to HTML, about 400 ms refresh), pane facts (cwd, branch, launch command, processes and listening ports from `tty7 procs`, time in state), Approve / Deny / Reply, and an **Interact** toggle.
+- **Detail panel** (opened by clicking a card): live output mirror (plain text from `capture --plain`, about 400 ms refresh; colours are out of scope for v1, see the capture note above), pane facts (cwd, branch, launch command, processes and listening ports from `tty7 procs`, time in state), Approve / Deny / Reply, and an **Interact** toggle.
 - **Interact mode:** off by default, per pane. While on, the panel has an amber border and an "INTERACTING" label, and browser keystrokes are mapped to `tty7 send --key` names (printable characters as text). It switches off after 2 minutes without a keystroke, or when the panel closes.
 - Transport: one WebSocket per page. Server → client: snapshots, preview updates, action results. Client → server: watch/unwatch pane, actions.
 
@@ -105,9 +106,9 @@ Logs go to `~/.local/state/shipherd/shipherd.log` (never to the terminal; it wou
 - **fleet:** pure reducer tests — event sequences → expected state, ordering, time in state, watched-pane bookkeeping.
 - **actions:** with a fake `Tty7Cli` — race guard, reply via stdin, per-agent key table, rejection of unknown pane ids.
 - **Web security:** HTTP-level tests that the server rejects a missing or wrong token, a foreign `Host`, a foreign `Origin`, and accepts the correct ones.
-- **TUI:** rendering against ratatui's `TestBackend` with `insta` snapshots.
+- **TUI:** rendering against ratatui's `TestBackend` asserting on the rendered text (no snapshot library).
 - **CI:** GitHub Actions on macOS and Linux — `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`.
 
 ## Tech
 
-Rust (stable), `tokio`, `serde` / `serde_json`, `ratatui` + `crossterm`, `axum` (WebSocket), `rand`, `insta` (dev), `tracing` + `tracing-appender` for file logging. Licence: Apache-2.0.
+Rust (stable), `tokio`, `serde` / `serde_json`, `ratatui` + `crossterm`, `axum` (WebSocket), `rand`, `tracing` + `tracing-appender` for file logging. Licence: Apache-2.0.
