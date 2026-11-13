@@ -31,6 +31,9 @@ pub struct AgentPane {
     pub repo: Option<String>,
     pub branch: Option<String>,
     pub preview: Option<String>,
+    /// The agent's current task, from its terminal title.
+    pub title: Option<String>,
+    pub launch: Vec<String>,
 }
 
 impl AgentPane {
@@ -52,6 +55,8 @@ impl AgentPane {
             repo: None,
             branch: None,
             preview: None,
+            title: None,
+            launch: Vec::new(),
         }
     }
 
@@ -92,13 +97,14 @@ impl Fleet {
         for entry in &resp.agents {
             let status = entry.state.status.unwrap_or(Status::Idle);
             let cwd = entry.state.cwd.clone();
-            let pane = match self.panes.remove(&entry.pane_id) {
+            let mut pane = match self.panes.remove(&entry.pane_id) {
                 Some(mut existing) => {
                     existing.update(&entry.agent, status, cwd, now_ms, false);
                     existing
                 }
                 None => AgentPane::new(entry.pane_id, &entry.agent, status, cwd, now_ms, false),
             };
+            pane.launch = entry.state.launch_argv.clone();
             next.insert(entry.pane_id, pane);
         }
         self.panes = next;
@@ -112,12 +118,13 @@ impl Fleet {
         };
         let status = agent.status.unwrap_or(Status::Idle);
         let cwd = facts.cwd.clone();
-        match self.panes.get_mut(&facts.id) {
-            Some(existing) => existing.update(&agent.agent, status, cwd, now_ms, true),
-            None => {
-                let pane = AgentPane::new(facts.id, &agent.agent, status, cwd, now_ms, true);
-                self.panes.insert(facts.id, pane);
-            }
+        let pane = self.panes.entry(facts.id).or_insert_with(|| {
+            AgentPane::new(facts.id, &agent.agent, status, cwd.clone(), now_ms, true)
+        });
+        pane.update(&agent.agent, status, cwd, now_ms, true);
+        pane.launch = agent.launch_argv.clone();
+        if let Some(title) = facts.osc_title.as_deref().and_then(clean_title) {
+            pane.title = Some(title);
         }
     }
 
@@ -152,6 +159,25 @@ impl Fleet {
         }
     }
 
+    /// Warnings every view shows above the agent list.
+    pub fn banners(&self) -> Vec<String> {
+        let mut banners: Vec<String> = self
+            .hooks_missing()
+            .into_iter()
+            .map(|agent| {
+                format!("status hooks not installed for {agent}: tty7 Settings → Integrations")
+            })
+            .collect();
+        match self.connection {
+            Connection::Connected => {}
+            Connection::Reconnecting => {
+                banners.push("tty7 event stream lost, reconnecting…".into())
+            }
+            Connection::Unreachable => banners.push("tty7 server not reachable, retrying…".into()),
+        }
+        banners
+    }
+
     pub fn set_git(&mut self, pane: u32, repo: Option<String>, branch: Option<String>) {
         if let Some(p) = self.panes.get_mut(&pane) {
             p.repo = repo;
@@ -173,6 +199,17 @@ pub fn format_elapsed(ms: u64, exact: bool) -> String {
     if exact { body } else { format!("≥{body}") }
 }
 
+/// Agents prefix their terminal title with a spinner or status glyph ("◐ Run ls -la").
+fn clean_title(raw: &str) -> Option<String> {
+    let mut chars = raw.chars();
+    let title = match (chars.next(), chars.next()) {
+        (Some(first), Some(' ')) if !first.is_alphanumeric() => chars.as_str(),
+        _ => raw,
+    }
+    .trim();
+    (!title.is_empty()).then(|| title.to_string())
+}
+
 #[cfg(test)]
 pub(crate) mod testing {
     use super::*;
@@ -182,9 +219,11 @@ pub(crate) mod testing {
         PaneFacts {
             id,
             cwd: Some(cwd.into()),
+            osc_title: None,
             agent: Some(PaneAgent {
                 agent: agent.into(),
                 status,
+                launch_argv: Vec::new(),
             }),
             live: true,
         }
@@ -269,6 +308,7 @@ mod tests {
             &PaneFacts {
                 id: 1,
                 cwd: None,
+                osc_title: None,
                 agent: None,
                 live: true,
             },
@@ -337,5 +377,48 @@ mod tests {
         assert_eq!(format_elapsed(302_000, true), "5m02s");
         assert_eq!(format_elapsed(3_840_000, true), "1h04m");
         assert_eq!(format_elapsed(120_000, false), "≥2m00s");
+    }
+
+    #[test]
+    fn titles_lose_their_spinner_glyph() {
+        assert_eq!(clean_title("◐ Run ls -la").as_deref(), Some("Run ls -la"));
+        assert_eq!(clean_title("✳ Claude Code").as_deref(), Some("Claude Code"));
+        assert_eq!(clean_title("claude").as_deref(), Some("claude"));
+        assert_eq!(clean_title("◐ ").as_deref(), None);
+    }
+
+    #[test]
+    fn events_set_title_and_launch_and_resync_keeps_the_title() {
+        let mut fleet = Fleet::default();
+        let mut with_title = facts(56, "Claude", Some(Status::Working), "/tmp/a");
+        with_title.osc_title = Some("◐ Run ls -la".into());
+        with_title.agent.as_mut().unwrap().launch_argv = vec!["claude".into()];
+        fleet.apply_pane_facts(&with_title, 1);
+        assert_eq!(fleet.panes[&56].title.as_deref(), Some("Run ls -la"));
+        assert_eq!(fleet.panes[&56].launch, vec!["claude".to_string()]);
+
+        fleet.resync(
+            &agents(r#"{"agents":[{"pane_id":56,"agent":"Claude","state":{"status":"working","cwd":"/tmp/a","launch_argv":["claude","--resume"]}}]}"#),
+            2,
+        );
+        assert_eq!(fleet.panes[&56].title.as_deref(), Some("Run ls -la"));
+        assert_eq!(
+            fleet.panes[&56].launch,
+            vec!["claude".to_string(), "--resume".to_string()]
+        );
+    }
+
+    #[test]
+    fn banners_cover_hooks_and_connection() {
+        let mut fleet = Fleet::default();
+        fleet.resync(&agents(NO_HOOKS), 0);
+        fleet.connection = Connection::Unreachable;
+        assert_eq!(
+            fleet.banners(),
+            vec![
+                "status hooks not installed for claude: tty7 Settings → Integrations".to_string(),
+                "tty7 server not reachable, retrying…".to_string(),
+            ]
+        );
     }
 }

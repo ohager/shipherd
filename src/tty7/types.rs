@@ -14,6 +14,17 @@ pub enum Status {
 }
 
 impl Status {
+    /// Identifier used in the web protocol and CSS classes.
+    pub fn key(self) -> &'static str {
+        match self {
+            Status::Waiting => "waiting",
+            Status::Working => "working",
+            Status::Done => "done",
+            Status::Idle => "idle",
+            Status::Unknown => "unknown",
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Status::Waiting => "needs you",
@@ -60,6 +71,9 @@ pub struct Diagnostic {
 pub struct PaneFacts {
     pub id: u32,
     pub cwd: Option<String>,
+    /// The terminal title the agent sets, e.g. "◐ Run ls -la".
+    #[serde(default)]
+    pub osc_title: Option<String>,
     pub agent: Option<PaneAgent>,
     #[serde(default = "default_live")]
     pub live: bool,
@@ -73,6 +87,8 @@ fn default_live() -> bool {
 pub struct PaneAgent {
     pub agent: String,
     pub status: Option<Status>,
+    #[serde(default)]
+    pub launch_argv: Vec<String>,
 }
 
 /// `tty7 capture --plain --json`
@@ -185,5 +201,21 @@ mod tests {
             statuses,
             vec![Status::Waiting, Status::Working, Status::Done, Status::Idle]
         );
+    }
+
+    #[test]
+    fn pane_facts_carry_title_and_launch_command() {
+        let line = EVENTS.lines().nth(2).unwrap();
+        let Event::PaneFacts(facts) = parse_event(line).unwrap() else {
+            panic!("expected pane facts");
+        };
+        assert_eq!(facts.osc_title.as_deref(), Some("◐ Run ls -la"));
+        assert_eq!(facts.agent.unwrap().launch_argv, vec!["claude".to_string()]);
+    }
+
+    #[test]
+    fn status_keys_are_stable_identifiers() {
+        assert_eq!(Status::Waiting.key(), "waiting");
+        assert_eq!(Status::Unknown.key(), "unknown");
     }
 }

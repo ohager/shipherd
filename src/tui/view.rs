@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use super::app::App;
-use crate::fleet::{AgentPane, Connection, Fleet, format_elapsed};
+use crate::fleet::{AgentPane, Fleet, format_elapsed};
 use crate::tty7::types::Status;
 
 const GROUPS: [(Status, &str); 5] = [
@@ -67,27 +67,11 @@ fn header_line(fleet: &Fleet) -> Line<'static> {
 
 fn banners(fleet: &Fleet) -> Vec<Line<'static>> {
     let warn = Style::new().fg(Color::Black).bg(Color::Yellow);
-    let mut lines: Vec<Line<'static>> = fleet
-        .hooks_missing()
+    fleet
+        .banners()
         .into_iter()
-        .map(|agent| {
-            Line::styled(
-                format!(" status hooks not installed for {agent}: tty7 Settings → Integrations "),
-                warn,
-            )
-        })
-        .collect();
-    match fleet.connection {
-        Connection::Connected => {}
-        Connection::Reconnecting => lines.push(Line::styled(
-            " tty7 event stream lost, reconnecting… ",
-            warn,
-        )),
-        Connection::Unreachable => {
-            lines.push(Line::styled(" tty7 server not reachable, retrying… ", warn))
-        }
-    }
-    lines
+        .map(|banner| Line::styled(format!(" {banner} "), warn))
+        .collect()
 }
 
 fn list_lines(fleet: &Fleet, app: &App, now_ms: u64) -> Vec<Line<'static>> {
@@ -186,6 +170,7 @@ fn footer_line(app: &App) -> Line<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fleet::Connection;
     use crate::fleet::testing::fleet_with;
     use crate::tty7::types::AgentsResponse;
     use ratatui::Terminal;
