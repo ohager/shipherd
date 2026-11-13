@@ -4,6 +4,7 @@ pub mod git;
 
 use std::collections::BTreeMap;
 
+use crate::tty7::detect::DetectedPane;
 use crate::tty7::types::{AgentsResponse, Diagnostic, PaneFacts, Status};
 
 const HOOKS_UNAVAILABLE: &str = "agent_status_hooks_unavailable";
@@ -34,6 +35,9 @@ pub struct AgentPane {
     /// The agent's current task, from its terminal title.
     pub title: Option<String>,
     pub launch: Vec<String>,
+    pub workspace: Option<String>,
+    /// False until the agent's status hooks report something; such agents show as idle.
+    pub has_status: bool,
 }
 
 impl AgentPane {
@@ -57,6 +61,8 @@ impl AgentPane {
             preview: None,
             title: None,
             launch: Vec::new(),
+            workspace: None,
+            has_status: false,
         }
     }
 
@@ -87,6 +93,8 @@ pub struct Fleet {
     pub panes: BTreeMap<u32, AgentPane>,
     pub diagnostics: Vec<Diagnostic>,
     pub connection: Connection,
+    /// The latest detection pass; kept so a resync doesn't drop agents that report no status.
+    pub detected: Vec<DetectedPane>,
 }
 
 impl Fleet {
@@ -105,10 +113,43 @@ impl Fleet {
                 None => AgentPane::new(entry.pane_id, &entry.agent, status, cwd, now_ms, false),
             };
             pane.launch = entry.state.launch_argv.clone();
+            pane.has_status = entry.state.status.is_some();
             next.insert(entry.pane_id, pane);
         }
-        self.panes = next;
+        // Whatever is left is either detected without a status, or closed.
+        let mut previous = std::mem::replace(&mut self.panes, next);
+        for detected in &self.detected {
+            self.panes.entry(detected.pane).or_insert_with(|| {
+                previous
+                    .remove(&detected.pane)
+                    .unwrap_or_else(|| detected_pane(detected, now_ms))
+            });
+        }
         self.diagnostics = resp.diagnostics.clone();
+        self.apply_detected_details();
+    }
+
+    /// Adds agents tty7 detected but `tty7 agents` doesn't list. Panes that stopped being detected
+    /// are dropped on the next resync, which knows which panes `tty7 agents` still reports.
+    pub fn set_detected(&mut self, detected: Vec<DetectedPane>, now_ms: u64) {
+        for d in &detected {
+            self.panes
+                .entry(d.pane)
+                .or_insert_with(|| detected_pane(d, now_ms));
+        }
+        self.detected = detected;
+        self.apply_detected_details();
+    }
+
+    fn apply_detected_details(&mut self) {
+        for d in &self.detected {
+            if let Some(pane) = self.panes.get_mut(&d.pane) {
+                pane.workspace = Some(d.workspace.clone());
+                if pane.title.is_none() {
+                    pane.title = d.label.clone();
+                }
+            }
+        }
     }
 
     pub fn apply_pane_facts(&mut self, facts: &PaneFacts, now_ms: u64) {
@@ -122,6 +163,7 @@ impl Fleet {
             AgentPane::new(facts.id, &agent.agent, status, cwd.clone(), now_ms, true)
         });
         pane.update(&agent.agent, status, cwd, now_ms, true);
+        pane.has_status |= agent.status.is_some();
         pane.launch = agent.launch_argv.clone();
         if let Some(title) = facts.osc_title.as_deref().and_then(clean_title) {
             pane.title = Some(title);
@@ -199,6 +241,11 @@ pub fn format_elapsed(ms: u64, exact: bool) -> String {
     if exact { body } else { format!("≥{body}") }
 }
 
+/// Its real status and start are unknown, so it counts as idle since it was first seen.
+fn detected_pane(d: &DetectedPane, now_ms: u64) -> AgentPane {
+    AgentPane::new(d.pane, &d.agent, Status::Idle, d.cwd.clone(), now_ms, false)
+}
+
 /// Agents prefix their terminal title with a spinner or status glyph ("◐ Run ls -la").
 fn clean_title(raw: &str) -> Option<String> {
     let mut chars = raw.chars();
@@ -229,6 +276,16 @@ pub(crate) mod testing {
         }
     }
 
+    pub fn detected(pane: u32, workspace: &str, label: &str) -> DetectedPane {
+        DetectedPane {
+            pane,
+            agent: "Claude".into(),
+            workspace: workspace.into(),
+            label: Some(label.into()),
+            cwd: Some("/tmp/detected".into()),
+        }
+    }
+
     /// Builds a fleet where each `(pane, agent, status, since_ms)` entered its status at `since_ms`.
     pub fn fleet_with(panes: &[(u32, &str, Status, u64)]) -> Fleet {
         let mut fleet = Fleet::default();
@@ -241,7 +298,7 @@ pub(crate) mod testing {
 
 #[cfg(test)]
 mod tests {
-    use super::testing::{facts, fleet_with};
+    use super::testing::{detected, facts, fleet_with};
     use super::*;
     use crate::tty7::types::PaneFacts;
 
@@ -420,5 +477,70 @@ mod tests {
                 "tty7 server not reachable, retrying…".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn detected_agents_without_a_status_are_listed_as_idle() {
+        let mut fleet = Fleet::default();
+        fleet.resync(&agents(AGENTS), 1_000);
+        fleet.set_detected(
+            vec![detected(22, "PR Reviews", "Routinen ausführen")],
+            2_000,
+        );
+
+        let pane = &fleet.panes[&22];
+        assert_eq!(pane.status, Status::Idle);
+        assert!(!pane.has_status);
+        assert!(!pane.since_exact);
+        assert_eq!(pane.workspace.as_deref(), Some("PR Reviews"));
+        assert_eq!(pane.title.as_deref(), Some("Routinen ausführen"));
+        assert_eq!(pane.cwd.as_deref(), Some("/tmp/detected"));
+        assert!(fleet.panes[&54].has_status);
+    }
+
+    #[test]
+    fn resync_keeps_detected_agents_and_their_start_time() {
+        let mut fleet = Fleet::default();
+        fleet.set_detected(vec![detected(22, "PR Reviews", "x")], 1_000);
+        fleet.resync(&agents(AGENTS), 5_000);
+        assert_eq!(fleet.panes[&22].status_since_ms, 1_000);
+        assert_eq!(fleet.panes.len(), 3);
+    }
+
+    #[test]
+    fn reported_status_wins_over_detection() {
+        let mut fleet = Fleet::default();
+        fleet.set_detected(
+            vec![detected(54, "Default", "Herdr and tty7 comparison")],
+            1_000,
+        );
+        fleet.resync(&agents(AGENTS), 2_000);
+        let pane = &fleet.panes[&54];
+        assert_eq!(pane.status, Status::Working);
+        assert!(pane.has_status);
+        assert_eq!(pane.workspace.as_deref(), Some("Default"));
+        assert_eq!(pane.cwd.as_deref(), Some("/home/dev/code/hermes"));
+    }
+
+    #[test]
+    fn panes_no_longer_detected_disappear_on_resync() {
+        let mut fleet = Fleet::default();
+        fleet.set_detected(vec![detected(22, "PR Reviews", "x")], 1_000);
+        fleet.set_detected(Vec::new(), 2_000);
+        fleet.resync(&agents(AGENTS), 3_000);
+        assert!(!fleet.panes.contains_key(&22));
+    }
+
+    #[test]
+    fn a_status_event_marks_a_detected_agent_as_reporting() {
+        let mut fleet = Fleet::default();
+        fleet.set_detected(vec![detected(22, "PR Reviews", "x")], 1_000);
+        fleet.apply_pane_facts(
+            &facts(22, "Claude", Some(Status::Waiting), "/tmp/detected"),
+            2_000,
+        );
+        assert!(fleet.panes[&22].has_status);
+        assert_eq!(fleet.panes[&22].status, Status::Waiting);
+        assert!(fleet.panes[&22].since_exact);
     }
 }
