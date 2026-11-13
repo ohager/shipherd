@@ -473,7 +473,7 @@ mod tests {
 
     #[tokio::test]
     async fn actions_round_trip_through_the_handle() {
-        let cli = Arc::new(FakeCli::with_agents(WAITING_54));
+        let cli = Arc::new(FakeCli::with_agents(WAITING_54).showing_permission_prompt(54));
         let _events = cli.push_event_stream();
         let handle = start(cli.clone());
         wait_for(&handle, |f| f.panes.contains_key(&54)).await;
@@ -513,7 +513,7 @@ mod tests {
 
     #[tokio::test]
     async fn status_changes_shortly_after_an_action_are_picked_up() {
-        let cli = Arc::new(FakeCli::with_agents(WAITING_54));
+        let cli = Arc::new(FakeCli::with_agents(WAITING_54).showing_permission_prompt(54));
         let _events = cli.push_event_stream();
         let handle = start(cli.clone());
         wait_for(&handle, |f| f.panes.contains_key(&54)).await;

@@ -1,0 +1,16 @@
+● The cleanup touches three call sites, and the right fix depends on how old
+  tokens should behave. Can you decide?
+────────────────────────────────────────────────────────────────────────────────
+←  ☐ Revocation  ☐ Lifetime  ☐ Old token  ✔ Submit  →
+
+│ When should existing tokens stop working?
+
+❯ 1. On rotation and resume (Recommended)
+     Issue a new version on every refresh and on resume.
+  2. Immediately, as in the ticket
+     Tokens die on suspend as well.
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel

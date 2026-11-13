@@ -112,7 +112,7 @@ mod tests {
         Ws,
         tokio::sync::mpsc::Sender<String>,
     ) {
-        let cli = Arc::new(FakeCli::with_agents(WAITING_54));
+        let cli = Arc::new(FakeCli::with_agents(WAITING_54).showing_permission_prompt(54));
         let events = cli.push_event_stream();
         let server = start(runtime::start(cli.clone()), 0).await.unwrap();
         let mut ws = connect(&server).await;

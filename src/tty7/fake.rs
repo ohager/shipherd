@@ -50,6 +50,13 @@ impl FakeCli {
         fake
     }
 
+    /// Makes `pane` show a Claude Code permission prompt, which approve/deny check for.
+    pub fn showing_permission_prompt(self, pane: u32) -> Self {
+        let screen = include_str!("../../tests/fixtures/screen-permission.txt");
+        self.captures.lock().unwrap().insert(pane, screen.into());
+        self
+    }
+
     /// Queues a stream for the next `spawn_events`. Drop the sender to simulate tty7 exiting.
     pub fn push_event_stream(&self) -> mpsc::Sender<String> {
         let (tx, rx) = mpsc::channel(64);

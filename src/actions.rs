@@ -47,6 +47,8 @@ pub enum Outcome {
     Unsupported,
     /// The request itself was invalid (unknown key name, control characters in text).
     Rejected(String),
+    /// Approve/deny would have answered a question (typing "1" picks its first option).
+    NotPermissionPrompt,
     Failed(String),
 }
 
@@ -62,6 +64,10 @@ impl Outcome {
             Outcome::UnknownPane => Some("that pane is gone".into()),
             Outcome::Unsupported => Some("not supported for this agent".into()),
             Outcome::Rejected(reason) => Some(format!("rejected: {reason}")),
+            Outcome::NotPermissionPrompt => Some(
+                "that's a question, not a permission prompt; answer it with Interact or in its pane"
+                    .into(),
+            ),
             Outcome::Failed(err) => Some(format!("failed: {err}")),
         }
     }
@@ -160,6 +166,29 @@ fn prompt_keys(agent: &str, approve: bool) -> Option<Keystrokes> {
     }
 }
 
+const PROMPT_CAPTURE_LINES: u32 = 40;
+/// A prompt occupies the bottom of the screen; older output above it may quote anything.
+const PROMPT_TAIL_LINES: usize = 20;
+
+/// Claude Code's permission prompts ask "Do you want to …?" with "1. Yes" and end in "Tab to amend".
+/// Its questions can offer "1. Yes" too, but they navigate with "Tab/Arrow keys".
+pub fn is_permission_prompt(screen: &str) -> bool {
+    let lines: Vec<&str> = screen
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    let tail = &lines[lines.len().saturating_sub(PROMPT_TAIL_LINES)..];
+    let asks = tail.iter().any(|l| l.starts_with("Do you want to"));
+    let offers_yes = tail
+        .iter()
+        .any(|l| l.trim_start_matches('❯').trim_start().starts_with("1. Yes"));
+    let is_question = tail
+        .iter()
+        .any(|l| l.contains("Tab/Arrow keys to navigate"));
+    asks && offers_yes && !is_question
+}
+
 pub fn supports_prompt_answers(agent: &str) -> bool {
     prompt_keys(agent, true).is_some()
 }
@@ -203,6 +232,14 @@ pub async fn execute(cli: &dyn Tty7Cli, fleet: &Fleet, action: &Action) -> Outco
     if !current.is_some_and(|s| allowed_statuses(action).contains(&s)) {
         return Outcome::NotReady { status: current };
     }
+    // tty7 reports questions and permission prompts both as `waiting`; only the screen tells them apart.
+    if matches!(action, Action::Approve { .. } | Action::Deny { .. }) {
+        match cli.capture_plain(pane, PROMPT_CAPTURE_LINES).await {
+            Ok(screen) if is_permission_prompt(&screen) => {}
+            Ok(_) => return Outcome::NotPermissionPrompt,
+            Err(err) => return Outcome::Failed(err.to_string()),
+        }
+    }
 
     let result = match keystrokes {
         Keystrokes::Text { text, enter } => cli.send_text(pane, &text, enter).await,
@@ -220,10 +257,17 @@ mod tests {
     use crate::fleet::testing::fleet_with;
     use crate::tty7::fake::{FakeCli, Sent};
 
+    const PERMISSION: &str = include_str!("../tests/fixtures/screen-permission.txt");
+    const QUESTION: &str = include_str!("../tests/fixtures/screen-question.txt");
+    const YES_NO_QUESTION: &str = include_str!("../tests/fixtures/screen-yes-no-question.txt");
+
+    /// The pane shows a permission prompt unless a test replaces its screen.
     fn tty7_reports(pane: u32, agent: &str, status: &str) -> FakeCli {
-        FakeCli::with_agents(&format!(
+        let cli = FakeCli::with_agents(&format!(
             r#"{{"agents":[{{"pane_id":{pane},"agent":"{agent}","state":{{"status":"{status}","cwd":"/tmp/x"}}}}]}}"#
-        ))
+        ));
+        cli.captures.lock().unwrap().insert(pane, PERMISSION.into());
+        cli
     }
 
     #[tokio::test]
@@ -419,6 +463,34 @@ mod tests {
                 .message()
                 .as_deref(),
             Some("rejected: unknown key x")
+        );
+    }
+
+    #[test]
+    fn tells_permission_prompts_from_questions() {
+        assert!(is_permission_prompt(PERMISSION));
+        assert!(!is_permission_prompt(QUESTION));
+        assert!(!is_permission_prompt(YES_NO_QUESTION));
+        assert!(!is_permission_prompt("❯ \n"));
+    }
+
+    #[tokio::test]
+    async fn approve_and_deny_refuse_to_answer_a_question() {
+        let cli = tty7_reports(54, "Claude", "waiting");
+        cli.captures.lock().unwrap().insert(54, QUESTION.into());
+        let fleet = fleet_with(&[(54, "Claude", Status::Waiting, 0)]);
+        for action in [Action::Approve { pane: 54 }, Action::Deny { pane: 54 }] {
+            assert_eq!(
+                execute(&cli, &fleet, &action).await,
+                Outcome::NotPermissionPrompt
+            );
+        }
+        assert!(cli.sent().is_empty());
+        assert_eq!(
+            Outcome::NotPermissionPrompt.message().as_deref(),
+            Some(
+                "that's a question, not a permission prompt; answer it with Interact or in its pane"
+            )
         );
     }
 }
