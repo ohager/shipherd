@@ -1,5 +1,7 @@
 //! The current set of agent panes. Pure state: no I/O, time is passed in.
 
+pub mod git;
+
 use std::collections::BTreeMap;
 
 use crate::tty7::types::{AgentsResponse, Diagnostic, PaneFacts, Status};
