@@ -7,7 +7,9 @@ use tokio::process::Command;
 use tokio::sync::mpsc;
 
 use super::Tty7Cli;
-use super::types::{AgentsResponse, CaptureResponse, ProcsResponse};
+use super::types::{
+    AgentsResponse, CaptureResponse, PanesResponse, ProcsResponse, TabsResponse, WorkspacesResponse,
+};
 
 /// Runs the real `tty7` binary. Arguments are passed as a list, never through a shell.
 pub struct RealCli;
@@ -90,6 +92,33 @@ impl Tty7Cli for RealCli {
         Ok(serde_json::from_slice(&out)?)
     }
 
+    async fn workspaces(&self) -> anyhow::Result<WorkspacesResponse> {
+        let out = Self::run(&["ls".into(), "--json".into()], None).await?;
+        Ok(serde_json::from_slice(&out)?)
+    }
+
+    async fn tabs(&self, workspace: &str) -> anyhow::Result<TabsResponse> {
+        let args = vec![
+            "tab".to_string(),
+            "ls".into(),
+            workspace.to_string(),
+            "--json".into(),
+        ];
+        let out = Self::run(&args, None).await?;
+        Ok(serde_json::from_slice(&out)?)
+    }
+
+    async fn panes(&self) -> anyhow::Result<PanesResponse> {
+        let args = vec![
+            "pane".to_string(),
+            "ls".into(),
+            "--all".into(),
+            "--json".into(),
+        ];
+        let out = Self::run(&args, None).await?;
+        Ok(serde_json::from_slice(&out)?)
+    }
+
     fn spawn_events(&self) -> anyhow::Result<mpsc::Receiver<String>> {
         let mut child = Command::new("tty7")
             .args(["events", "--json"])
@@ -129,5 +158,20 @@ mod tests {
             .agents()
             .await
             .expect("tty7 agents --json should succeed");
+    }
+
+    /// Needs a running tty7: `cargo test -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn detects_agents_in_real_tty7() {
+        let detected = crate::tty7::detect::detect(&RealCli)
+            .await
+            .expect("detection should succeed");
+        for d in &detected {
+            eprintln!(
+                "%{:<4} {:<12} {:<22} {:?}",
+                d.pane, d.agent, d.workspace, d.label
+            );
+        }
     }
 }

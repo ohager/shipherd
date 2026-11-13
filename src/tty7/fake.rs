@@ -7,7 +7,9 @@ use async_trait::async_trait;
 use tokio::sync::mpsc;
 
 use super::Tty7Cli;
-use super::types::{AgentsResponse, ProcsResponse};
+use super::types::{
+    AgentsResponse, PanesResponse, ProcsResponse, TabsResponse, WorkspacesResponse,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Sent {
@@ -32,6 +34,10 @@ pub struct FakeCli {
     pub procs: Mutex<HashMap<u32, ProcsResponse>>,
     /// Makes every capture this slow, like a real Claude Code pane (~300 ms).
     pub capture_delay: Mutex<Duration>,
+    pub workspaces: Mutex<WorkspacesResponse>,
+    /// Tabs by workspace id; unknown workspaces have none.
+    pub tabs: Mutex<HashMap<String, TabsResponse>>,
+    pub panes: Mutex<PanesResponse>,
 }
 
 impl FakeCli {
@@ -94,6 +100,24 @@ impl Tty7Cli for FakeCli {
             Some(procs) => Ok(procs),
             None => bail!("no such pane %{pane}"),
         }
+    }
+
+    async fn workspaces(&self) -> anyhow::Result<WorkspacesResponse> {
+        Ok(self.workspaces.lock().unwrap().clone())
+    }
+
+    async fn tabs(&self, workspace: &str) -> anyhow::Result<TabsResponse> {
+        Ok(self
+            .tabs
+            .lock()
+            .unwrap()
+            .get(workspace)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    async fn panes(&self) -> anyhow::Result<PanesResponse> {
+        Ok(self.panes.lock().unwrap().clone())
     }
 
     fn spawn_events(&self) -> anyhow::Result<mpsc::Receiver<String>> {

@@ -1,6 +1,7 @@
 //! Everything that knows about the `tty7` CLI and its JSON.
 
 pub mod cli;
+pub mod detect;
 #[cfg(test)]
 pub mod fake;
 pub mod types;
@@ -8,7 +9,7 @@ pub mod types;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
-use types::{AgentsResponse, ProcsResponse};
+use types::{AgentsResponse, PanesResponse, ProcsResponse, TabsResponse, WorkspacesResponse};
 
 /// Every interaction with tty7 goes through this trait so tests can substitute `FakeCli`.
 #[async_trait]
@@ -23,5 +24,9 @@ pub trait Tty7Cli: Send + Sync {
     /// Starts `tty7 events --json`. The receiver yields raw lines and closes when the process exits.
     /// Processes and listening ports inside a pane.
     async fn procs(&self, pane: u32) -> anyhow::Result<ProcsResponse>;
+    async fn workspaces(&self) -> anyhow::Result<WorkspacesResponse>;
+    async fn tabs(&self, workspace: &str) -> anyhow::Result<TabsResponse>;
+    /// Every pane on the machine, across all workspaces.
+    async fn panes(&self) -> anyhow::Result<PanesResponse>;
     fn spawn_events(&self) -> anyhow::Result<mpsc::Receiver<String>>;
 }

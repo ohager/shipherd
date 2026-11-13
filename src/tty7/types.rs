@@ -114,6 +114,49 @@ pub struct Proc {
     pub foreground: bool,
 }
 
+/// `tty7 ls --json`
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct WorkspacesResponse {
+    #[serde(default)]
+    pub workspaces: Vec<Workspace>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Workspace {
+    pub id: String,
+    pub name: String,
+}
+
+/// `tty7 tab ls <workspace> --json`. tty7 detects agents per tab, not per pane.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct TabsResponse {
+    #[serde(default)]
+    pub tabs: Vec<Tab>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Tab {
+    pub label: Option<String>,
+    pub agent: Option<String>,
+    #[serde(default)]
+    pub panes: Vec<u32>,
+}
+
+/// `tty7 pane ls --all --json`
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct PanesResponse {
+    #[serde(default)]
+    pub panes: Vec<PaneInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PaneInfo {
+    pub pane: u32,
+    /// The pane's foreground process, e.g. "claude.exe".
+    pub title: Option<String>,
+    pub cwd: Option<String>,
+}
+
 /// One line of `tty7 events --json`. Only pane facts matter to shipherd; everything else is `Other`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
@@ -250,5 +293,21 @@ mod tests {
             }
         );
         assert!(procs.ports.is_empty());
+    }
+
+    #[test]
+    fn parses_workspaces_tabs_and_panes() {
+        let ws: WorkspacesResponse =
+            serde_json::from_str(include_str!("../../tests/fixtures/ls.json")).unwrap();
+        assert_eq!(ws.workspaces[1].name, "PR Reviews");
+        let tabs: TabsResponse =
+            serde_json::from_str(include_str!("../../tests/fixtures/tabs-default.json")).unwrap();
+        assert_eq!(tabs.tabs[0].agent.as_deref(), Some("Claude Code"));
+        assert_eq!(tabs.tabs[0].panes, vec![54, 61]);
+        assert_eq!(tabs.tabs[1].agent, None);
+        let panes: PanesResponse =
+            serde_json::from_str(include_str!("../../tests/fixtures/panes.json")).unwrap();
+        assert_eq!(panes.panes[0].title.as_deref(), Some("claude.exe"));
+        assert_eq!(panes.panes[3].cwd.as_deref(), Some("/home/dev/code/e2e"));
     }
 }
