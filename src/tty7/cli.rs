@@ -7,7 +7,7 @@ use tokio::process::Command;
 use tokio::sync::mpsc;
 
 use super::Tty7Cli;
-use super::types::{AgentsResponse, CaptureResponse};
+use super::types::{AgentsResponse, CaptureResponse, ProcsResponse};
 
 /// Runs the real `tty7` binary. Arguments are passed as a list, never through a shell.
 pub struct RealCli;
@@ -82,6 +82,12 @@ impl Tty7Cli for RealCli {
             args.push((*key).to_string());
         }
         Self::run(&args, None).await.map(|_| ())
+    }
+
+    async fn procs(&self, pane: u32) -> anyhow::Result<ProcsResponse> {
+        let args = vec!["procs".to_string(), format!("%{pane}"), "--json".into()];
+        let out = Self::run(&args, None).await?;
+        Ok(serde_json::from_slice(&out)?)
     }
 
     fn spawn_events(&self) -> anyhow::Result<mpsc::Receiver<String>> {

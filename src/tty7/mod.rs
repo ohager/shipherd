@@ -8,7 +8,7 @@ pub mod types;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
-use types::AgentsResponse;
+use types::{AgentsResponse, ProcsResponse};
 
 /// Every interaction with tty7 goes through this trait so tests can substitute `FakeCli`.
 #[async_trait]
@@ -21,5 +21,7 @@ pub trait Tty7Cli: Send + Sync {
     /// Sends named keys (`escape`, `enter`, `up`, `C-c`, …).
     async fn send_keys(&self, pane: u32, keys: &[&str]) -> anyhow::Result<()>;
     /// Starts `tty7 events --json`. The receiver yields raw lines and closes when the process exits.
+    /// Processes and listening ports inside a pane.
+    async fn procs(&self, pane: u32) -> anyhow::Result<ProcsResponse>;
     fn spawn_events(&self) -> anyhow::Result<mpsc::Receiver<String>>;
 }

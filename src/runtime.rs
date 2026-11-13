@@ -12,7 +12,7 @@ use crate::actions::{self, Action, Outcome};
 use crate::fleet::git::{self, GitInfo};
 use crate::fleet::{Connection, Fleet};
 use crate::tty7::Tty7Cli;
-use crate::tty7::types::{Event, parse_event};
+use crate::tty7::types::{Event, ProcsResponse, parse_event};
 
 pub const PREVIEW_LINES: u32 = 200;
 const PREVIEW_EVERY: Duration = Duration::from_millis(400);
@@ -41,6 +41,10 @@ pub enum Request {
     },
     /// Replaces the set of panes `client` shows output for.
     Watch { client: String, panes: HashSet<u32> },
+    Procs {
+        pane: u32,
+        reply: oneshot::Sender<Option<ProcsResponse>>,
+    },
 }
 
 /// What a view holds: the latest snapshot and a way to send requests.
@@ -63,6 +67,16 @@ impl Handle {
             return stopped();
         }
         rx.await.unwrap_or_else(|_| stopped())
+    }
+
+    /// `None` when the pane isn't a known agent or tty7 failed.
+    pub async fn procs(&self, pane: u32) -> Option<ProcsResponse> {
+        let (tx, rx) = oneshot::channel();
+        self.requests
+            .send(Request::Procs { pane, reply: tx })
+            .await
+            .ok()?;
+        rx.await.ok().flatten()
     }
 
     pub async fn watch(&self, client: &str, panes: HashSet<u32>) {
@@ -164,6 +178,18 @@ impl Core {
                     }
                     Some(Request::Watch { client, panes }) => {
                         self.watched.insert(client, panes);
+                    }
+                    Some(Request::Procs { pane, reply }) => {
+                        let procs = if self.fleet.panes.contains_key(&pane) {
+                            self.cli
+                                .procs(pane)
+                                .await
+                                .inspect_err(|err| warn!("tty7 procs %{pane} failed: {err:#}"))
+                                .ok()
+                        } else {
+                            None
+                        };
+                        let _ = reply.send(procs);
                     }
                     // Every Handle is gone: the views have exited.
                     None => break,
@@ -422,5 +448,20 @@ mod tests {
         let fleet = wait_for(&handle, |f| f.panes[&54].preview.is_some()).await;
         assert_eq!(fleet.panes[&54].preview.as_deref(), Some("hello from 54"));
         assert_eq!(fleet.panes[&56].preview, None);
+    }
+
+    #[tokio::test]
+    async fn procs_are_fetched_for_known_panes_only() {
+        let cli = Arc::new(FakeCli::with_agents(AGENTS));
+        cli.procs.lock().unwrap().insert(
+            54,
+            serde_json::from_str(include_str!("../tests/fixtures/procs.json")).unwrap(),
+        );
+        let _events = cli.push_event_stream();
+        let handle = start(cli.clone());
+        wait_for(&handle, |f| f.panes.contains_key(&54)).await;
+
+        assert_eq!(handle.procs(54).await.unwrap().procs.len(), 2);
+        assert_eq!(handle.procs(999).await, None);
     }
 }

@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use tokio::sync::mpsc;
 
 use super::Tty7Cli;
-use super::types::AgentsResponse;
+use super::types::{AgentsResponse, ProcsResponse};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Sent {
@@ -28,6 +28,7 @@ pub struct FakeCli {
     pub captures: Mutex<HashMap<u32, String>>,
     pub sent: Mutex<Vec<Sent>>,
     pub event_streams: Mutex<VecDeque<mpsc::Receiver<String>>>,
+    pub procs: Mutex<HashMap<u32, ProcsResponse>>,
 }
 
 impl FakeCli {
@@ -80,6 +81,14 @@ impl Tty7Cli for FakeCli {
         let keys = keys.iter().map(|k| k.to_string()).collect();
         self.sent.lock().unwrap().push(Sent::Keys { pane, keys });
         Ok(())
+    }
+
+    async fn procs(&self, pane: u32) -> anyhow::Result<ProcsResponse> {
+        let procs = self.procs.lock().unwrap().get(&pane).cloned();
+        match procs {
+            Some(procs) => Ok(procs),
+            None => bail!("no such pane %{pane}"),
+        }
     }
 
     fn spawn_events(&self) -> anyhow::Result<mpsc::Receiver<String>> {

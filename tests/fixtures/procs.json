@@ -1,0 +1,1 @@
+{"procs":[{"pid":31421,"name":"zsh","depth":0,"foreground":false,"rss":770048,"cpu_ns":177863208,"started":1794579451675769},{"pid":33569,"name":"claude.exe","depth":1,"foreground":true,"rss":297549824,"cpu_ns":192977845041,"started":1794579541856891}],"ports":[],"probe":{"state":"ok"}}

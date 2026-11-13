@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Agent status from tty7's hooks. Declaration order is display order (`derive(Ord)` sorts by it).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
@@ -95,6 +95,23 @@ pub struct PaneAgent {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CaptureResponse {
     pub text: String,
+}
+
+/// `tty7 procs --json`. Port entries stay untyped: no listening port has been recorded yet.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct ProcsResponse {
+    #[serde(default)]
+    pub procs: Vec<Proc>,
+    #[serde(default)]
+    pub ports: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct Proc {
+    pub pid: u32,
+    pub name: String,
+    #[serde(default)]
+    pub foreground: bool,
 }
 
 /// One line of `tty7 events --json`. Only pane facts matter to shipherd; everything else is `Other`.
@@ -217,5 +234,21 @@ mod tests {
     fn status_keys_are_stable_identifiers() {
         assert_eq!(Status::Waiting.key(), "waiting");
         assert_eq!(Status::Unknown.key(), "unknown");
+    }
+
+    #[test]
+    fn parses_procs() {
+        let procs: ProcsResponse =
+            serde_json::from_str(include_str!("../../tests/fixtures/procs.json")).unwrap();
+        assert_eq!(procs.procs.len(), 2);
+        assert_eq!(
+            procs.procs[1],
+            Proc {
+                pid: 33569,
+                name: "claude.exe".into(),
+                foreground: true
+            }
+        );
+        assert!(procs.ports.is_empty());
     }
 }
