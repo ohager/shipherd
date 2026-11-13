@@ -40,7 +40,7 @@ pub fn render(frame: &mut Frame, fleet: &Fleet, app: &App, now_ms: u64) {
     ])
     .areas(frame.area());
 
-    frame.render_widget(Paragraph::new(header_line(fleet)), header);
+    frame.render_widget(Paragraph::new(header_line(fleet, app)), header);
     frame.render_widget(Paragraph::new(banners), banner_area);
     frame.render_widget(Paragraph::new(list_lines(fleet, app, now_ms)), list);
     frame.render_widget(
@@ -50,7 +50,7 @@ pub fn render(frame: &mut Frame, fleet: &Fleet, app: &App, now_ms: u64) {
     frame.render_widget(Paragraph::new(footer_line(app)), footer);
 }
 
-fn header_line(fleet: &Fleet) -> Line<'static> {
+fn header_line(fleet: &Fleet, app: &App) -> Line<'static> {
     let mut spans = vec![
         Span::styled("⛵ shipherd", Style::new().add_modifier(Modifier::BOLD)),
         Span::styled(format!("  {} agents", fleet.panes.len()), dim()),
@@ -61,6 +61,9 @@ fn header_line(fleet: &Fleet) -> Line<'static> {
             format!(" · {needs_you} need you"),
             Style::new().fg(Color::Yellow),
         ));
+    }
+    if let Some(url) = &app.web_url {
+        spans.push(Span::styled(format!("  {url}"), dim()));
     }
     Line::from(spans)
 }
@@ -163,7 +166,10 @@ fn footer_line(app: &App) -> Line<'static> {
     match (&app.flash, &app.reply) {
         (Some(flash), _) => Line::styled(flash.clone(), Style::new().fg(Color::Yellow)),
         (None, Some(_)) => Line::styled("enter send · esc cancel", dim()),
-        (None, None) => Line::styled("↑↓ select · y approve · n deny · r reply · q quit", dim()),
+        (None, None) => Line::styled(
+            "↑↓ select · y approve · n deny · r reply · w web · q quit",
+            dim(),
+        ),
     }
 }
 
@@ -278,7 +284,10 @@ mod tests {
 
     #[test]
     fn footer_lists_the_keys() {
-        assert!(draw(&sample(), &App::default()).contains("y approve · n deny · r reply · q quit"));
+        assert!(
+            draw(&sample(), &App::default())
+                .contains("y approve · n deny · r reply · w web · q quit")
+        );
     }
 
     #[test]
@@ -294,5 +303,22 @@ mod tests {
         assert!(row.contains("41s"), "{screen}");
         assert!(row.contains("hermes-reim…"), "{screen}");
         assert!(row.contains("feature/ari-4…"), "{screen}");
+    }
+
+    #[test]
+    fn header_shows_the_web_url() {
+        let app = App {
+            web_url: Some("http://127.0.0.1:7777".into()),
+            ..App::default()
+        };
+        let screen = draw(&sample(), &app);
+        assert!(
+            screen
+                .lines()
+                .next()
+                .unwrap()
+                .contains("http://127.0.0.1:7777"),
+            "{screen}"
+        );
     }
 }

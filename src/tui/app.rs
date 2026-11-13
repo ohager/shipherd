@@ -13,11 +13,14 @@ pub struct App {
     pub reply: Option<String>,
     /// One-line message in the footer, cleared on the next key press.
     pub flash: Option<String>,
+    /// Shown in the header; the login link itself stays out of the UI.
+    pub web_url: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
     Act(Action),
+    OpenWeb,
     Quit,
 }
 
@@ -54,6 +57,7 @@ impl App {
                 self.start_reply(fleet);
                 None
             }
+            KeyCode::Char('w') => Some(Command::OpenWeb),
             _ => None,
         }
     }
@@ -351,5 +355,15 @@ mod tests {
         );
         let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
         assert_eq!(app.handle_key(ctrl_c, &fleet), Some(Command::Quit));
+    }
+
+    #[test]
+    fn w_opens_the_web_dashboard() {
+        let fleet = sample();
+        let mut app = App::default();
+        assert_eq!(
+            press(&mut app, &fleet, &[KeyCode::Char('w')]),
+            Some(Command::OpenWeb)
+        );
     }
 }
