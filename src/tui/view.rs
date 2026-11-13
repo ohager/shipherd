@@ -40,17 +40,25 @@ pub fn render(frame: &mut Frame, fleet: &Fleet, app: &App, now_ms: u64) {
     ])
     .areas(frame.area());
 
-    frame.render_widget(Paragraph::new(header_line(fleet, app)), header);
+    frame.render_widget(
+        Paragraph::new(header_line(fleet, app, header.width)),
+        header,
+    );
     frame.render_widget(Paragraph::new(banners), banner_area);
-    frame.render_widget(Paragraph::new(list_lines(fleet, app, now_ms)), list);
+    let (lines, selected_line) = list_lines(fleet, app, now_ms, list.width);
+    let offset = scroll_offset(selected_line, list.height);
+    frame.render_widget(Paragraph::new(lines).scroll((offset, 0)), list);
     frame.render_widget(
         Paragraph::new(preview_lines(fleet, app, preview.height)),
         preview,
     );
-    frame.render_widget(Paragraph::new(footer_line(fleet, app)), footer);
+    frame.render_widget(
+        Paragraph::new(footer_line(fleet, app, footer.width)),
+        footer,
+    );
 }
 
-fn header_line(fleet: &Fleet, app: &App) -> Line<'static> {
+fn header_line(fleet: &Fleet, app: &App, width: u16) -> Line<'static> {
     let mut spans = vec![
         Span::styled("⛵ shipherd", Style::new().add_modifier(Modifier::BOLD)),
         Span::styled(format!("  {} agents", fleet.panes.len()), dim()),
@@ -62,8 +70,12 @@ fn header_line(fleet: &Fleet, app: &App) -> Line<'static> {
             Style::new().fg(Color::Yellow),
         ));
     }
+    // A cut-off URL ("…:777") looks valid but points nowhere, so it's all or nothing.
     if let Some(url) = &app.web_url {
-        spans.push(Span::styled(format!("  {url}"), dim()));
+        let url = Span::styled(format!("  {url}"), dim());
+        if Line::from(spans.clone()).width() + url.width() <= usize::from(width) {
+            spans.push(url);
+        }
     }
     Line::from(spans)
 }
@@ -77,11 +89,18 @@ fn banners(fleet: &Fleet) -> Vec<Line<'static>> {
         .collect()
 }
 
-fn list_lines(fleet: &Fleet, app: &App, now_ms: u64) -> Vec<Line<'static>> {
+/// Returns the lines and the index of the selected agent's line, for scrolling.
+fn list_lines(
+    fleet: &Fleet,
+    app: &App,
+    now_ms: u64,
+    width: u16,
+) -> (Vec<Line<'static>>, Option<usize>) {
     let ordered = fleet.ordered();
     if ordered.is_empty() {
-        return vec![Line::styled("no agents running in tty7", dim())];
+        return (vec![Line::styled("no agents running in tty7", dim())], None);
     }
+    let mut selected_line = None;
     let mut lines = Vec::new();
     for (status, title) in GROUPS {
         let group: Vec<&AgentPane> = ordered
@@ -97,13 +116,30 @@ fn list_lines(fleet: &Fleet, app: &App, now_ms: u64) -> Vec<Line<'static>> {
             .add_modifier(Modifier::BOLD);
         lines.push(Line::styled(title, heading));
         for pane in group {
-            lines.push(agent_line(pane, app.selected == Some(pane.pane), now_ms));
+            let selected = app.selected == Some(pane.pane);
+            if selected {
+                selected_line = Some(lines.len());
+            }
+            lines.push(agent_line(pane, selected, now_ms, usize::from(width)));
         }
     }
-    lines
+    (lines, selected_line)
 }
 
-fn agent_line(pane: &AgentPane, selected: bool, now_ms: u64) -> Line<'static> {
+/// Scrolls just far enough that the selected line is the last visible one.
+fn scroll_offset(selected_line: Option<usize>, height: u16) -> u16 {
+    match selected_line {
+        Some(line) if line >= usize::from(height) => (line + 1 - usize::from(height)) as u16,
+        _ => 0,
+    }
+}
+
+const AGENT_WIDTH: usize = 7;
+const TIME_WIDTH: usize = 7;
+/// Dot, agent and time, with their separating spaces.
+const ROW_BASE_WIDTH: usize = 1 + 1 + AGENT_WIDTH + 1 + TIME_WIDTH;
+
+fn agent_line(pane: &AgentPane, selected: bool, now_ms: u64, width: usize) -> Line<'static> {
     // Without a reported status, the time since shipherd first saw the agent means nothing.
     let elapsed = if pane.has_status {
         format_elapsed(
@@ -113,14 +149,24 @@ fn agent_line(pane: &AgentPane, selected: bool, now_ms: u64) -> Line<'static> {
     } else {
         "–".to_string()
     };
-    let text = format!(
-        " {:<7} {:<12} {:<12} {:<14} {:>7}",
-        fit(&pane.agent.to_lowercase(), 7),
-        fit(pane.workspace.as_deref().unwrap_or("-"), 12),
-        fit(pane.repo.as_deref().unwrap_or("-"), 12),
-        fit(pane.branch.as_deref().unwrap_or("-"), 14),
-        elapsed
+    // As the pane narrows, branch goes first, then workspace, then repo; the time always stays.
+    let show_repo = width >= ROW_BASE_WIDTH + 13;
+    let show_workspace = width >= ROW_BASE_WIDTH + 13 + 13;
+    let show_branch = width >= ROW_BASE_WIDTH + 13 + 13 + 15;
+    let mut text = format!(
+        " {:<AGENT_WIDTH$}",
+        fit(&pane.agent.to_lowercase(), AGENT_WIDTH)
     );
+    if show_workspace {
+        text += &format!(" {:<12}", fit(pane.workspace.as_deref().unwrap_or("-"), 12));
+    }
+    if show_repo {
+        text += &format!(" {:<12}", fit(pane.repo.as_deref().unwrap_or("-"), 12));
+    }
+    if show_branch {
+        text += &format!(" {:<14}", fit(pane.branch.as_deref().unwrap_or("-"), 14));
+    }
+    text += &format!(" {elapsed:>TIME_WIDTH$}");
     let line = Line::from(vec![
         Span::styled("●", Style::new().fg(status_color(pane.status))),
         Span::raw(text),
@@ -168,7 +214,10 @@ fn preview_lines(fleet: &Fleet, app: &App, height: u16) -> Vec<Line<'static>> {
     lines
 }
 
-fn footer_line(fleet: &Fleet, app: &App) -> Line<'static> {
+const KEYS_HINT: &str = "↑↓ select · y approve · n deny · r reply · x close · w web · q quit";
+const KEYS_HINT_SHORT: &str = "↑↓ y n r x w q";
+
+fn footer_line(fleet: &Fleet, app: &App, width: u16) -> Line<'static> {
     if let Some(pane) = app.confirm_close {
         let (agent, workspace) = fleet
             .panes
@@ -185,10 +234,14 @@ fn footer_line(fleet: &Fleet, app: &App) -> Line<'static> {
     match (&app.flash, &app.reply) {
         (Some(flash), _) => Line::styled(flash.clone(), Style::new().fg(Color::Yellow)),
         (None, Some(_)) => Line::styled("enter send · esc cancel", dim()),
-        (None, None) => Line::styled(
-            "↑↓ select · y approve · n deny · r reply · w web · q quit",
-            dim(),
-        ),
+        (None, None) => {
+            let full = Line::styled(KEYS_HINT, dim());
+            if full.width() <= usize::from(width) {
+                full
+            } else {
+                Line::styled(KEYS_HINT_SHORT, dim())
+            }
+        }
     }
 }
 
@@ -204,7 +257,10 @@ mod tests {
     const NOW: u64 = 1_000_000;
 
     fn draw(fleet: &Fleet, app: &App) -> String {
-        let (width, height) = (60, 20);
+        draw_sized(fleet, app, 60, 20)
+    }
+
+    fn draw_sized(fleet: &Fleet, app: &App, width: u16, height: u16) -> String {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal
             .draw(|frame| render(frame, fleet, app, NOW))
@@ -303,9 +359,20 @@ mod tests {
 
     #[test]
     fn footer_lists_the_keys() {
+        let wide = draw_sized(&sample(), &App::default(), 80, 20);
         assert!(
-            draw(&sample(), &App::default())
-                .contains("y approve · n deny · r reply · w web · q quit")
+            wide.contains("↑↓ select · y approve · n deny · r reply · x close · w web · q quit"),
+            "{wide}"
+        );
+        let narrow = draw_sized(&sample(), &App::default(), 40, 20);
+        assert!(
+            narrow
+                .lines()
+                .last()
+                .unwrap()
+                .trim_end()
+                .ends_with("↑↓ y n r x w q"),
+            "{narrow}"
         );
     }
 
@@ -376,5 +443,76 @@ mod tests {
                 .contains("close %1 (claude · PR Reviews)? y/n"),
             "{screen}"
         );
+    }
+
+    fn many_agents() -> Fleet {
+        let panes: Vec<(u32, &str, Status, u64)> = (1..=20)
+            .map(|i| (i, "Claude", Status::Idle, NOW - u64::from(i) * 1_000))
+            .collect();
+        fleet_with(&panes)
+    }
+
+    #[test]
+    fn the_list_scrolls_to_keep_the_selection_visible() {
+        let fleet = many_agents();
+        let last = fleet.ordered().last().unwrap().pane;
+        let app = App {
+            selected: Some(last),
+            ..App::default()
+        };
+        // 14 rows: header, footer, a 40 % preview, so the list has room for about 7 lines.
+        let screen = draw_sized(&fleet, &app, 60, 14);
+        let elapsed = format_elapsed(NOW - fleet.panes[&last].status_since_ms, true);
+        assert!(
+            screen.contains(&format!(" {elapsed}")),
+            "selected row missing:\n{screen}"
+        );
+    }
+
+    #[test]
+    fn narrow_panes_drop_branch_then_workspace_then_repo_but_keep_the_time() {
+        let mut fleet = fleet_with(&[(1, "Claude", Status::Working, NOW - 41_000)]);
+        fleet.set_detected(
+            vec![crate::fleet::testing::detected(1, "PR Reviews", "x")],
+            NOW,
+        );
+        fleet.set_git(1, Some("hermes".into()), Some("main".into()));
+        let row = |width| {
+            let screen = draw_sized(&fleet, &App::default(), width, 12);
+            screen
+                .lines()
+                .find(|l| l.contains("claude"))
+                .unwrap()
+                .to_string()
+        };
+        let has = |r: &str, parts: [&str; 4]| parts.map(|p| r.contains(p));
+        assert_eq!(
+            has(&row(60), ["PR Reviews", "hermes", "main", "41s"]),
+            [true, true, true, true]
+        );
+        assert_eq!(
+            has(&row(50), ["PR Reviews", "hermes", "main", "41s"]),
+            [true, true, false, true]
+        );
+        assert_eq!(
+            has(&row(40), ["PR Reviews", "hermes", "main", "41s"]),
+            [false, true, false, true]
+        );
+        assert_eq!(
+            has(&row(25), ["PR Reviews", "hermes", "main", "41s"]),
+            [false, false, false, true]
+        );
+    }
+
+    #[test]
+    fn the_header_leaves_out_the_url_rather_than_cutting_it() {
+        let app = App {
+            web_url: Some("http://127.0.0.1:7777".into()),
+            ..App::default()
+        };
+        let narrow = draw_sized(&sample(), &app, 44, 12);
+        let header = narrow.lines().next().unwrap();
+        assert!(!header.contains("http"), "{header}");
+        assert!(header.contains("1 need you"), "{header}");
     }
 }
