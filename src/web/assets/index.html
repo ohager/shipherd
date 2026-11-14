@@ -13,6 +13,9 @@
     <span id="summary"></span>
     <span id="conn"></span>
     <span id="notice"></span>
+    <div id="grouping" role="group" aria-label="Group the board by">
+      <button data-grouping="status">Status</button><button data-grouping="workspace">Workspace</button>
+    </div>
     <button id="open-tty7" title="Bring the tty7 window to the front">Open tty7</button>
   </header>
   <div id="banners"></div>
@@ -23,6 +26,7 @@
       <section class="column" data-status="working"><h2>Working</h2><div class="cards"></div></section>
       <section class="column" data-status="done"><h2>Done</h2><div class="cards"></div></section>
     </main>
+    <main id="ws-board" hidden></main>
     <details id="idle"><summary>Idle <span class="count"></span></summary><div class="cards"></div></details>
   </div>
 
