@@ -306,7 +306,14 @@ setInterval(() => {
 function showPreview(text) {
   const mirror = $("d-mirror");
   const atBottom = mirror.scrollTop + mirror.clientHeight >= mirror.scrollHeight - 4;
-  mirror.textContent = text;
+  mirror.replaceChildren(...L.linkify(text).map((piece) => {
+    if (piece.url === undefined) return piece.text;
+    const link = el("a", null, piece.url);
+    link.href = piece.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    return link;
+  }));
   if (atBottom) mirror.scrollTop = mirror.scrollHeight;
 }
 

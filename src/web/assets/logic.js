@@ -85,7 +85,35 @@
     return merged;
   }
 
-  const api = { workspaceColor, elapsed, nextSelection, groupByWorkspace, paneFromHash, hashForPane, toKey, mergeText };
+  /** Splits screen text into `{ text }` and `{ url }` pieces, so the mirror can make URLs clickable.
+   *  Trailing punctuation and a closing bracket without its opener stay in the text. */
+  function linkify(text) {
+    const pieces = [];
+    const push = (piece) => {
+      const last = pieces[pieces.length - 1];
+      if (piece.text !== undefined && last && last.text !== undefined) last.text += piece.text;
+      else if (piece.text !== "") pieces.push(piece);
+    };
+    let from = 0;
+    for (const match of text.matchAll(/https?:\/\/[^\s<>"'`]+/g)) {
+      let url = match[0];
+      for (;;) {
+        const tail = url[url.length - 1];
+        if (/[.,;:!?]/.test(tail)) url = url.slice(0, -1);
+        else if (tail === ")" && url.split("(").length < url.split(")").length) url = url.slice(0, -1);
+        else if (tail === "]" && url.split("[").length < url.split("]").length) url = url.slice(0, -1);
+        else break;
+      }
+      if (/^https?:\/\/$/.test(url)) continue;
+      push({ text: text.slice(from, match.index) });
+      push({ url });
+      from = match.index + url.length;
+    }
+    push({ text: text.slice(from) });
+    return pieces;
+  }
+
+  const api = { workspaceColor, elapsed, nextSelection, groupByWorkspace, paneFromHash, hashForPane, toKey, mergeText, linkify };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ShipherdLogic = api;
 })(this);

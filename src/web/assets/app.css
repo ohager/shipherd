@@ -106,6 +106,8 @@ button.danger-outline { background: none; color: #f08080; border: 1px solid #8e2
 #d-procs { font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #d-interact-label { align-self: flex-start; background: var(--waiting); color: #000; font-weight: 700; padding: 2px 8px; border-radius: 4px; }
 #d-mirror { flex: 1; min-height: 120px; margin: 0; overflow: auto; background: #0b0d12; border-radius: 6px; padding: 8px; font: 12px/1.35 ui-monospace, Menlo, monospace; white-space: pre; }
+#d-mirror a { color: inherit; text-decoration: underline dotted; }
+#d-mirror a:hover { color: var(--working); text-decoration-style: solid; }
 .d-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 #d-reply { display: flex; gap: 6px; flex: 1; }
 #d-reply[hidden] { display: none; }

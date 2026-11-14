@@ -79,3 +79,23 @@ test("grouping by workspace sorts the workspaces and keeps the server's order in
   assert.deepEqual(groups.map((g) => g.agents.map((a) => a.pane)), [[5], [3], [1, 4], [2]]);
   assert.deepEqual(logic.groupByWorkspace([]), []);
 });
+
+test("links split http(s) URLs out of the screen text", () => {
+  assert.deepEqual(logic.linkify("no links here"), [{ text: "no links here" }]);
+  assert.deepEqual(logic.linkify("PR: https://github.com/o/r/pull/7 opened"), [
+    { text: "PR: " },
+    { url: "https://github.com/o/r/pull/7" },
+    { text: " opened" },
+  ]);
+  assert.deepEqual(logic.linkify("a http://x.io\nb https://y.io/p?q=1#f"), [
+    { text: "a " }, { url: "http://x.io" }, { text: "\nb " }, { url: "https://y.io/p?q=1#f" },
+  ]);
+});
+
+test("links leave trailing punctuation and unbalanced brackets in the text", () => {
+  assert.deepEqual(logic.linkify("see https://x.io/a."), [{ text: "see " }, { url: "https://x.io/a" }, { text: "." }]);
+  assert.deepEqual(logic.linkify("(https://x.io/a), next"), [{ text: "(" }, { url: "https://x.io/a" }, { text: "), next" }]);
+  assert.deepEqual(logic.linkify("https://en.wikipedia.org/wiki/Rust_(language)"), [{ url: "https://en.wikipedia.org/wiki/Rust_(language)" }]);
+  assert.deepEqual(logic.linkify("<https://x.io>"), [{ text: "<" }, { url: "https://x.io" }, { text: ">" }]);
+  assert.deepEqual(logic.linkify("https:// nothing"), [{ text: "https:// nothing" }]);
+});
