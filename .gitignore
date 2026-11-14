@@ -27,3 +27,6 @@ rustc-ice-*.txt
 # Added by cargo
 
 /target
+
+# macOS Finder metadata
+.DS_Store
