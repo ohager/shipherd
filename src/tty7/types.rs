@@ -58,6 +58,9 @@ pub struct AgentEntryState {
     pub cwd: Option<String>,
     #[serde(default)]
     pub launch_argv: Vec<String>,
+    /// The agent's own session id (Claude Code: names its transcript directory).
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

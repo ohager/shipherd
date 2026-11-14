@@ -2,8 +2,9 @@
 
 pub mod git;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
+use crate::agents::{BackgroundTarget, BackgroundTask};
 use crate::tty7::detect::DetectedPane;
 use crate::tty7::types::{AgentsResponse, Diagnostic, PaneFacts, Status};
 
@@ -38,6 +39,10 @@ pub struct AgentPane {
     pub workspace: Option<String>,
     /// False until the agent's status hooks report something; such agents show as idle.
     pub has_status: bool,
+    /// Reported by `tty7 agents` only, so it arrives with the next resync.
+    pub session_id: Option<String>,
+    /// Subagents still running after the main turn; tty7's hooks don't report them.
+    pub background: Vec<BackgroundTask>,
 }
 
 impl AgentPane {
@@ -63,6 +68,16 @@ impl AgentPane {
             launch: Vec::new(),
             workspace: None,
             has_status: false,
+            session_id: None,
+            background: Vec::new(),
+        }
+    }
+
+    /// The status the views group by: a finished agent with background work is still working.
+    pub fn board_status(&self) -> Status {
+        match self.status {
+            Status::Done | Status::Idle if !self.background.is_empty() => Status::Working,
+            status => status,
         }
     }
 
@@ -113,6 +128,7 @@ impl Fleet {
                 None => AgentPane::new(entry.pane_id, &entry.agent, status, cwd, now_ms, false),
             };
             pane.launch = entry.state.launch_argv.clone();
+            pane.session_id = entry.state.session_id.clone();
             pane.has_status = entry.state.status.is_some();
             next.insert(entry.pane_id, pane);
         }
@@ -173,7 +189,7 @@ impl Fleet {
     /// Display order shared by every view: grouped by status, longest in that status first.
     pub fn ordered(&self) -> Vec<&AgentPane> {
         let mut panes: Vec<&AgentPane> = self.panes.values().collect();
-        panes.sort_by_key(|p| (p.status, p.status_since_ms, p.pane));
+        panes.sort_by_key(|p| (p.board_status(), p.status_since_ms, p.pane));
         panes
     }
 
@@ -190,6 +206,34 @@ impl Fleet {
         }
         groups.sort_by_cached_key(|(ws, _)| (ws.is_none(), ws.map(str::to_lowercase)));
         groups
+    }
+
+    /// Panes whose agent session is known, for the background worker.
+    pub fn background_targets(&self) -> Vec<BackgroundTarget> {
+        self.panes
+            .values()
+            .filter_map(|p| {
+                Some(BackgroundTarget {
+                    pane: p.pane,
+                    agent: p.agent.clone(),
+                    session_id: p.session_id.clone()?,
+                })
+            })
+            .collect()
+    }
+
+    /// Applies one full scan; panes it doesn't mention have no background work. Returns true
+    /// when anything changed.
+    pub fn set_background(&mut self, found: &HashMap<u32, Vec<BackgroundTask>>) -> bool {
+        let mut changed = false;
+        for pane in self.panes.values_mut() {
+            let next = found.get(&pane.pane).cloned().unwrap_or_default();
+            if pane.background != next {
+                pane.background = next;
+                changed = true;
+            }
+        }
+        changed
     }
 
     pub fn count(&self, status: Status) -> usize {
@@ -315,6 +359,7 @@ pub(crate) mod testing {
 mod tests {
     use super::testing::{detected, facts, fleet_with};
     use super::*;
+    use crate::agents::BackgroundTask;
     use crate::tty7::types::PaneFacts;
 
     const AGENTS: &str = include_str!("../../tests/fixtures/agents.json");
@@ -590,5 +635,49 @@ mod tests {
         assert!(fleet.panes[&22].has_status);
         assert_eq!(fleet.panes[&22].status, Status::Waiting);
         assert!(fleet.panes[&22].since_exact);
+    }
+
+    #[test]
+    fn resync_keeps_the_session_id() {
+        let mut fleet = Fleet::default();
+        fleet.resync(&agents(AGENTS), 0);
+        assert_eq!(
+            fleet.panes[&54].session_id.as_deref(),
+            Some("00000000-0000-0000-0000-000000000054")
+        );
+    }
+
+    #[test]
+    fn finished_agents_with_background_work_sort_as_working() {
+        let mut fleet = fleet_with(&[
+            (1, "Claude", Status::Working, 5_000),
+            (2, "Claude", Status::Done, 1_000),
+            (3, "Claude", Status::Done, 2_000),
+        ]);
+        let task = BackgroundTask {
+            kind: "researcher".into(),
+            description: "Locating".into(),
+            since_ms: 1_500,
+        };
+        let found = HashMap::from([(3, vec![task.clone()])]);
+        assert!(fleet.set_background(&found));
+        assert!(!fleet.set_background(&found), "unchanged");
+        assert_eq!(fleet.panes[&3].board_status(), Status::Working);
+        assert_eq!(fleet.panes[&3].status, Status::Done, "reply stays allowed");
+        let order: Vec<u32> = fleet.ordered().iter().map(|p| p.pane).collect();
+        assert_eq!(order, vec![3, 1, 2]);
+        // Panes missing from a scan lose their background work.
+        assert!(fleet.set_background(&HashMap::new()));
+        assert!(fleet.panes[&3].background.is_empty());
+    }
+
+    #[test]
+    fn background_targets_are_panes_with_a_session() {
+        let mut fleet = Fleet::default();
+        fleet.resync(&agents(AGENTS), 0);
+        let targets = fleet.background_targets();
+        assert_eq!(targets.len(), 2);
+        assert_eq!(targets[0].pane, 54);
+        assert_eq!(targets[0].agent, "Claude");
     }
 }
