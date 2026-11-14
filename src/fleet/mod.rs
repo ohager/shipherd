@@ -177,6 +177,21 @@ impl Fleet {
         panes
     }
 
+    /// One group per workspace (case-insensitive alphabetical, agents without one last),
+    /// each in `ordered()` order.
+    pub fn by_workspace(&self) -> Vec<(Option<&str>, Vec<&AgentPane>)> {
+        let mut groups: Vec<(Option<&str>, Vec<&AgentPane>)> = Vec::new();
+        for pane in self.ordered() {
+            let workspace = pane.workspace.as_deref();
+            match groups.iter_mut().find(|(ws, _)| *ws == workspace) {
+                Some((_, panes)) => panes.push(pane),
+                None => groups.push((workspace, vec![pane])),
+            }
+        }
+        groups.sort_by_cached_key(|(ws, _)| (ws.is_none(), ws.map(str::to_lowercase)));
+        groups
+    }
+
     pub fn count(&self, status: Status) -> usize {
         self.panes.values().filter(|p| p.status == status).count()
     }
@@ -418,6 +433,39 @@ mod tests {
         let order: Vec<u32> = fleet.ordered().iter().map(|p| p.pane).collect();
         assert_eq!(order, vec![5, 3, 4, 2, 1]);
         assert_eq!(fleet.count(Status::Waiting), 2);
+    }
+
+    #[test]
+    fn by_workspace_sorts_workspaces_and_keeps_status_order_inside() {
+        let mut fleet = fleet_with(&[
+            (1, "Claude", Status::Done, 100),
+            (2, "Claude", Status::Working, 300),
+            (3, "Claude", Status::Waiting, 500),
+            (4, "Claude", Status::Working, 200),
+            (5, "Claude", Status::Waiting, 400),
+        ]);
+        fleet.set_detected(
+            vec![
+                detected(1, "reviews", "a"),
+                detected(2, "reviews", "b"),
+                detected(3, "reviews", "c"),
+                detected(4, "Default", "d"),
+            ],
+            0,
+        );
+        let groups: Vec<(Option<&str>, Vec<u32>)> = fleet
+            .by_workspace()
+            .into_iter()
+            .map(|(ws, panes)| (ws, panes.iter().map(|p| p.pane).collect()))
+            .collect();
+        assert_eq!(
+            groups,
+            vec![
+                (Some("Default"), vec![4]),
+                (Some("reviews"), vec![3, 2, 1]),
+                (None, vec![5]),
+            ]
+        );
     }
 
     #[test]
