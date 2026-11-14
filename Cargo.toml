@@ -2,6 +2,16 @@
 name = "shipherd"
 version = "0.1.0"
 edition = "2024"
+description = "A live overview of the coding agents running in tty7, as a terminal UI and a web dashboard"
+license = "Apache-2.0"
+repository = "https://github.com/ohager/shipherd"
+homepage = "https://github.com/ohager/shipherd"
+readme = "README.md"
+publish = false
+
+[package.metadata.dist]
+# publish = false keeps it off crates.io; this keeps it in the GitHub releases
+dist = true
 
 [dependencies]
 anyhow = "1.0.104"
@@ -21,3 +31,8 @@ futures-util = "0.3.34"
 tempfile = "3.27.0"
 tokio-tungstenite = "0.30.0"
 tower = { version = "0.5.3", features = ["util"] }
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
