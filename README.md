@@ -15,6 +15,11 @@
 
 ---
 
+
+https://github.com/user-attachments/assets/eca3ad17-3242-45b8-9266-2220dcdff14d
+
+
+
 Running five Claude Code sessions across three repos? shipherd shows them all in one place, puts the ones waiting for you at the top, and lets you approve, deny or reply without hunting for the right pane.
 
 ## Features
