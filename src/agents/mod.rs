@@ -3,6 +3,9 @@
 
 pub mod background;
 mod claude;
+mod codex;
+mod gemini;
+mod opencode;
 
 /// What to type into a pane to answer a prompt.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,7 +46,12 @@ pub trait AgentProfile: Sync {
     }
 }
 
-static PROFILES: &[&dyn AgentProfile] = &[&claude::Claude];
+static PROFILES: &[&dyn AgentProfile] = &[
+    &claude::Claude,
+    &codex::Codex,
+    &gemini::Gemini,
+    &opencode::OpenCode,
+];
 
 /// Matches the first word of tty7's agent name case-insensitively ("Gemini CLI" → gemini).
 pub fn profile_for(agent: &str) -> Option<&'static dyn AgentProfile> {
@@ -81,6 +89,10 @@ mod tests {
     fn profiles_match_the_first_word_of_the_agent_name() {
         assert_eq!(profile_for("Claude").map(|p| p.name()), Some("claude"));
         assert_eq!(profile_for("claude code").map(|p| p.name()), Some("claude"));
+        assert_eq!(profile_for("Codex").map(|p| p.name()), Some("codex"));
+        assert_eq!(profile_for("Gemini CLI").map(|p| p.name()), Some("gemini"));
+        assert_eq!(profile_for("gemini").map(|p| p.name()), Some("gemini"));
+        assert_eq!(profile_for("OpenCode").map(|p| p.name()), Some("opencode"));
         assert!(profile_for("Aider").is_none());
         assert!(profile_for("").is_none());
     }

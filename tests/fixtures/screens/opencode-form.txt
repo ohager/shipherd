@@ -1,0 +1,8 @@
+# packages/tui/src/routes/session/form.tsx @ f0089856 (reconstructed, unverified)
+┃   Pick a deployment target
+┃   Field 1 of 2 · 0/2 completed
+┃   Where should this run? Allow once per region, or Reject the request.
+┃   1. Option A
+┃      description
+┃   2. Type your own answer
+┃   ⇆ tab  ↑↓ select  enter submit  esc dismiss

@@ -1,0 +1,9 @@
+# packages/cli/src/ui/components/ExitPlanModeDialog.tsx @ 4ed06ed0 (unverified)
+╭──────────────────────────────────────────────────────────────────────────╮
+│ Ready to start implementation?                                           │
+│ ● 1.  Yes, automatically accept edits                                    │
+│       Approves plan and allows tools to run automatically                │
+│   2.  Yes, manually accept edits                                         │
+│   3.  Type your feedback...                                              │
+│ Enter to select · ↑/↓ to navigate · Ctrl+G to edit plan · Esc to cancel  │
+╰──────────────────────────────────────────────────────────────────────────╯

@@ -1,0 +1,6 @@
+# packages/tui/src/routes/session/permission.tsx @ f0089856 (reconstructed, unverified)
+┃  △ Permission required
+┃
+┃   $ touch test.txt
+┃
+┃   Allow once  Always allow  Reject       ctrl+f fullscreen  ⇆ select  enter confirm

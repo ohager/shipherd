@@ -1,0 +1,9 @@
+# codex-rs/tui/src/chatwidget/plan_implementation.rs @ 32cec881 (unverified)
+
+  Implement this plan?
+
+› 1. Yes, implement this plan          Switch to Default and start coding
+  2. Yes, clear context and implement  Fresh thread with this plan
+  3. No, stay in Plan mode             Continue planning with the model
+
+  enter select · esc back

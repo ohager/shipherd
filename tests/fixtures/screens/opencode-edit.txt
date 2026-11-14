@@ -1,0 +1,6 @@
+# packages/tui/src/routes/session/permission.tsx @ f0089856 (reconstructed, unverified)
+┃  △ Permission required
+┃    → Edit src/foo.ts
+┃   - const a = 1
+┃   + const a = 2
+┃   Allow once  Reject       ctrl+f fullscreen  ⇆ select  enter confirm

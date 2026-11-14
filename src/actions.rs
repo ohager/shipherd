@@ -341,6 +341,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn approve_on_codex_types_y_after_checking_its_screen() {
+        let cli = tty7_reports(60, "Codex", "waiting");
+        cli.captures.lock().unwrap().insert(
+            60,
+            include_str!("../tests/fixtures/screens/codex-exec.txt").into(),
+        );
+        let fleet = fleet_with(&[(60, "Codex", Status::Waiting, 0)]);
+        assert_eq!(
+            execute(&cli, &fleet, &Action::Approve { pane: 60 }).await,
+            Outcome::Sent
+        );
+        assert_eq!(
+            cli.sent(),
+            vec![Sent::Text {
+                pane: 60,
+                text: "y".into(),
+                enter: false
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn codex_refuses_a_claude_screen() {
+        // tty7_reports puts Claude's permission prompt on the pane.
+        let cli = tty7_reports(60, "Codex", "waiting");
+        let fleet = fleet_with(&[(60, "Codex", Status::Waiting, 0)]);
+        assert_eq!(
+            execute(&cli, &fleet, &Action::Approve { pane: 60 }).await,
+            Outcome::NotPermissionPrompt
+        );
+        assert!(cli.sent().is_empty());
+    }
+
+    #[tokio::test]
     async fn tty7_failure_is_reported() {
         let cli = FakeCli::default();
         let fleet = fleet_with(&[(54, "Claude", Status::Waiting, 0)]);

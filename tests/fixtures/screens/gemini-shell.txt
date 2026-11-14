@@ -1,0 +1,12 @@
+# packages/cli/src/ui/components/__snapshots__/ToolConfirmationQueue.test.tsx.snap @ 4ed06ed0 (unverified)
+╭──────────────────────────────────────────────────────────────╮
+│ ? Shell  Executes a bash command                              │
+│ ╭──────────────────────────────────────────────────────────╮ │
+│ │ touch test.txt                                           │ │
+│ ╰──────────────────────────────────────────────────────────╯ │
+│ Allow execution of [Shell]?                                   │
+│                                                               │
+│ ● 1. Allow once                                               │
+│   2. Allow for this session                                   │
+│   3. No, suggest changes (esc)                                │
+╰──────────────────────────────────────────────────────────────╯

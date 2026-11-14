@@ -1,0 +1,9 @@
+# packages/cli/src/ui/components ask_user dialog @ 4ed06ed0 (unverified)
+╭─────────────────────────────────────────────────────╮
+│ Answer Questions                                    │
+│ Which database should the service use?              │
+│ ● 1.  Option 1                                      │
+│       Desc                                          │
+│   2.  Enter a custom value                          │
+│ Enter to select · ↑/↓ to navigate · Esc to cancel   │
+╰─────────────────────────────────────────────────────╯
