@@ -1,5 +1,5 @@
 "use strict";
-// Run with `node --test tests/web/`.
+// Run with `node --test tests/web/*.test.js`.
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const logic = require("../../src/web/assets/logic.js");
