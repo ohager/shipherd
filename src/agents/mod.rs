@@ -1,6 +1,8 @@
 //! What shipherd knows about each kind of agent: how its permission prompts look, which keys
 //! answer them, and what background work it hides from tty7's status hooks.
 
+use std::collections::HashMap;
+
 pub mod background;
 mod claude;
 mod codex;
@@ -59,6 +61,20 @@ pub fn profile_for(agent: &str) -> Option<&'static dyn AgentProfile> {
     PROFILES.iter().copied().find(|p| p.name() == first)
 }
 
+/// One scan over all targets; only panes with background work are in the result.
+pub fn background_for(
+    targets: &[BackgroundTarget],
+    now_ms: u64,
+) -> HashMap<u32, Vec<BackgroundTask>> {
+    targets
+        .iter()
+        .filter_map(|t| {
+            let tasks = profile_for(&t.agent)?.background_work(&t.session_id, now_ms);
+            (!tasks.is_empty()).then_some((t.pane, tasks))
+        })
+        .collect()
+}
+
 /// A prompt occupies the bottom of the screen; older output above it may quote anything.
 const PROMPT_TAIL_LINES: usize = 20;
 /// Box borders and selection markers agents draw around and in front of options.
@@ -107,5 +123,15 @@ mod tests {
         let tail = prompt_tail(&screen);
         assert_eq!(tail.len(), PROMPT_TAIL_LINES);
         assert_eq!(tail[tail.len() - 2..], ["1. Allow once", "2. No"]);
+    }
+
+    #[test]
+    fn background_for_skips_agents_without_a_profile() {
+        let targets = vec![BackgroundTarget {
+            pane: 7,
+            agent: "Aider".into(),
+            session_id: "00000000-0000-0000-0000-000000000007".into(),
+        }];
+        assert!(background_for(&targets, 0).is_empty());
     }
 }

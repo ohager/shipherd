@@ -9,6 +9,7 @@ use tokio::time::{Instant, MissedTickBehavior, interval_at, sleep, sleep_until};
 use tracing::warn;
 
 use crate::actions::{self, Action, Outcome};
+use crate::agents::{self, BackgroundTarget, BackgroundTask};
 use crate::fleet::git::{self, GitInfo};
 use crate::fleet::{Connection, Fleet};
 use crate::tty7::Tty7Cli;
@@ -28,6 +29,8 @@ const RESYNC_EVERY: Duration = Duration::from_secs(10);
 const DETECT_EVERY: Duration = Duration::from_secs(10);
 /// Claude Code needs a moment to process a keystroke, and tty7 sends no event for a cancelled prompt.
 const RESYNC_AFTER_ACTION: Duration = Duration::from_millis(1500);
+/// Reading transcripts is cheap, but it's file I/O, so it runs off the core loop like git.
+const BACKGROUND_EVERY: Duration = Duration::from_secs(5);
 const FIRST_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 
@@ -124,8 +127,12 @@ pub fn start(cli: Arc<dyn Tty7Cli>) -> Handle {
     ));
     let (detected_tx, detected_rx) = mpsc::channel(2);
     tokio::spawn(detect_worker(cli.clone(), detected_tx));
+    let (background_targets, background_targets_rx) = watch::channel(Vec::new());
+    let (background_tx, background_rx) = mpsc::channel(2);
+    tokio::spawn(background_worker(background_targets_rx, background_tx));
     let (git_tx, git_rx) = mpsc::unbounded_channel();
     let core = Core {
+        background_targets,
         cli,
         git_results: git_tx,
         git_pending: HashSet::new(),
@@ -137,7 +144,7 @@ pub fn start(cli: Arc<dyn Tty7Cli>) -> Handle {
         watched: HashMap::new(),
         streaming: false,
     };
-    tokio::spawn(core.run(requests_rx, captured_rx, detected_rx, git_rx));
+    tokio::spawn(core.run(requests_rx, captured_rx, detected_rx, git_rx, background_rx));
     Handle {
         snapshots,
         requests,
@@ -164,6 +171,8 @@ struct Core {
     git_pending: HashSet<String>,
     watched: HashMap<String, HashSet<u32>>,
     streaming: bool,
+    /// Panes with a known agent session; the background worker scans these.
+    background_targets: watch::Sender<Vec<BackgroundTarget>>,
 }
 
 impl Core {
@@ -173,6 +182,7 @@ impl Core {
         mut captured: mpsc::Receiver<Capture>,
         mut detected: mpsc::Receiver<Vec<DetectedPane>>,
         mut git_results: mpsc::UnboundedReceiver<(String, GitInfo)>,
+        mut background: mpsc::Receiver<HashMap<u32, Vec<BackgroundTask>>>,
     ) {
         let mut events: Option<mpsc::Receiver<String>> = None;
         let mut backoff = FIRST_BACKOFF;
@@ -224,6 +234,11 @@ impl Core {
                     self.fleet.set_detected(panes, now_ms());
                     self.enrich_git();
                     self.publish();
+                }
+                Some(found) = background.recv() => {
+                    if self.fleet.set_background(&found) {
+                        self.publish();
+                    }
                 }
                 Some((cwd, info)) = git_results.recv() => {
                     self.git_pending.remove(&cwd);
@@ -368,6 +383,15 @@ impl Core {
     /// `pane_facts` event on every spinner frame of an agent's title, so most events change nothing.
     fn publish(&self) {
         self.update_capture_targets();
+        let targets = self.fleet.background_targets();
+        self.background_targets.send_if_modified(|current| {
+            if *current == targets {
+                false
+            } else {
+                *current = targets;
+                true
+            }
+        });
         self.snapshots.send_if_modified(|current| {
             if *current == self.fleet {
                 false
@@ -392,6 +416,26 @@ async fn detect_worker(cli: Arc<dyn Tty7Cli>, detected: mpsc::Sender<Vec<Detecte
             Err(err) => warn!("detecting agents failed: {err:#}"),
         }
         sleep(DETECT_EVERY).await;
+    }
+}
+
+/// Looks for background agents of the given panes every few seconds and reports every result.
+async fn background_worker(
+    targets: watch::Receiver<Vec<BackgroundTarget>>,
+    found: mpsc::Sender<HashMap<u32, Vec<BackgroundTask>>>,
+) {
+    loop {
+        let current = targets.borrow().clone();
+        let scan = tokio::task::spawn_blocking(move || agents::background_for(&current, now_ms()));
+        match scan.await {
+            Ok(result) => {
+                if found.send(result).await.is_err() {
+                    return;
+                }
+            }
+            Err(err) => warn!("scanning for background agents failed: {err}"),
+        }
+        sleep(BACKGROUND_EVERY).await;
     }
 }
 
