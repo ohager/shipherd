@@ -268,9 +268,10 @@ mod tests {
     use crate::fleet::testing::fleet_with;
     use crate::tty7::fake::{FakeCli, Sent};
 
-    const PERMISSION: &str = include_str!("../tests/fixtures/screen-permission.txt");
-    const QUESTION: &str = include_str!("../tests/fixtures/screen-question.txt");
-    const YES_NO_QUESTION: &str = include_str!("../tests/fixtures/screen-yes-no-question.txt");
+    const PERMISSION: &str = include_str!("../tests/fixtures/screens/claude-permission.txt");
+    const QUESTION: &str = include_str!("../tests/fixtures/screens/claude-question.txt");
+    const YES_NO_QUESTION: &str =
+        include_str!("../tests/fixtures/screens/claude-yes-no-question.txt");
 
     /// The pane shows a permission prompt unless a test replaces its screen.
     fn tty7_reports(pane: u32, agent: &str, status: &str) -> FakeCli {

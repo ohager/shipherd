@@ -55,7 +55,7 @@ impl FakeCli {
 
     /// Makes `pane` show a Claude Code permission prompt, which approve/deny check for.
     pub fn showing_permission_prompt(self, pane: u32) -> Self {
-        let screen = include_str!("../../tests/fixtures/screen-permission.txt");
+        let screen = include_str!("../../tests/fixtures/screens/claude-permission.txt");
         self.captures.lock().unwrap().insert(pane, screen.into());
         self
     }

@@ -324,7 +324,7 @@ mod tests {
         session.on_client(ClientMsg::Watch { pane: Some(1) }, now);
         fleet.set_preview(
             1,
-            include_str!("../../tests/fixtures/screen-permission.txt").into(),
+            include_str!("../../tests/fixtures/screens/claude-permission.txt").into(),
         );
         assert!(matches!(
             session.updates(&fleet, now).last(),
