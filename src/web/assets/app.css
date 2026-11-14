@@ -50,9 +50,15 @@ button.danger-outline { background: none; color: #f08080; border: 1px solid #8e2
 
 #board[hidden], #ws-board[hidden], #idle[hidden] { display: none; }
 
-/* By workspace: one column per workspace, the status on each card. */
-#ws-board { display: flex; gap: 12px; padding: 0 16px 12px; overflow-x: auto; align-items: flex-start; }
-.column.ws { flex: 1 0 280px; min-width: 0; max-width: 420px; }
+/* By workspace: one row per workspace, stacked; the status on each card. */
+#ws-board { display: flex; flex-direction: column; gap: 12px; padding: 0 16px 12px; }
+.column.ws { min-height: 0; }
+.column.ws .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+.column.ws .cards:empty { display: none; }
+.column.ws .card { margin-bottom: 0; }
+.ws-idle { color: var(--dim); margin: 6px 4px 2px; }
+.ws-idle summary { cursor: pointer; font-size: 12px; }
+.ws-idle .cards { margin-top: 8px; }
 .column.ws h2 { display: flex; align-items: center; gap: 6px; text-transform: none; letter-spacing: 0; }
 .column.ws h2 .badge { font-size: 12px; max-width: 200px; }
 .column.ws h2 .count { color: var(--dim); font-weight: 400; }

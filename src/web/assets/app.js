@@ -9,7 +9,8 @@ const STATUS_LABEL = { waiting: "needs you", working: "working", done: "done", i
 // permissionPrompt: what the selected pane's screen shows; null until its first preview arrives.
 // loaded: whether the first snapshot has arrived, so a missing pane can be told apart from a closed one.
 // grouping: "status" or "workspace", how the board and the focus list are laid out.
-const state = { agents: [], banners: [], selected: null, interacting: false, nextId: 1, ws: null, permissionPrompt: null, loaded: false, grouping: "status" };
+// openIdle: the workspaces whose idle fold is open on the workspace board.
+const state = { agents: [], banners: [], selected: null, interacting: false, nextId: 1, ws: null, permissionPrompt: null, loaded: false, grouping: "status", openIdle: new Set() };
 const GROUPING_KEY = "shipherd.grouping";
 let pendingKeys = [];
 let flushTimer = null;
@@ -209,16 +210,29 @@ function renderBoard() {
 }
 
 function renderWorkspaceBoard() {
-  const columns = L.groupByWorkspace(state.agents).map(({ workspace, agents }) => {
-    const column = el("section", "column ws");
+  const rows = L.groupByWorkspace(state.agents).map(({ workspace, agents }) => {
+    const key = workspace || "";
+    const row = el("section", "column ws");
     const heading = el("h2");
     heading.append(badge(workspace || "other"), el("span", "count", String(agents.length)));
     const cards = el("div", "cards");
-    cards.append(...agents.map(card));
-    column.append(heading, cards);
-    return column;
+    cards.append(...agents.filter((a) => groupOf(a) !== "other").map(card));
+    row.append(heading, cards);
+
+    // Idle agents fold away; which workspaces have them open survives re-renders.
+    const idle = agents.filter((a) => groupOf(a) === "other");
+    if (idle.length > 0) {
+      const fold = el("details", "ws-idle");
+      fold.open = state.openIdle.has(key);
+      fold.ontoggle = () => (fold.open ? state.openIdle.add(key) : state.openIdle.delete(key));
+      const idleCards = el("div", "cards");
+      idleCards.append(...idle.map(card));
+      fold.append(el("summary", null, `Idle (${idle.length})`), idleCards);
+      row.append(fold);
+    }
+    return row;
   });
-  $("ws-board").replaceChildren(...columns);
+  $("ws-board").replaceChildren(...rows);
 }
 
 function listRow(agent) {
