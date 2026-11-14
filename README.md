@@ -31,7 +31,8 @@ Running five Claude Code sessions across three repos? shipherd shows them all in
 
 - macOS or Linux
 - [tty7](https://tty7.io) with its `tty7` CLI on your `PATH`
-- tty7's agent status hooks installed (Settings → Integrations), so agents report their status
+- Status hooks installed for your agents (see [Setup](#setup))
+
 ## Installation
 
 Prebuilt binaries for macOS (Apple Silicon and Intel) and Linux (x86_64 and arm64):
@@ -49,6 +50,30 @@ git clone https://github.com/ohager/shipherd.git
 cd shipherd
 cargo install --path .
 ```
+
+## Setup
+
+shipherd doesn't connect to your agents itself. It reads what tty7 knows about them, so the setup happens in tty7.
+
+1. **Check the tty7 CLI.** shipherd calls `tty7` for everything and exits with a hint if the CLI isn't on your `PATH`:
+   ```bash
+   tty7 --version
+   ```
+2. **Install the status hooks for your agents.** In the tty7 app, open **Settings → Integrations** and install the hooks for each agent you use (Claude Code, Codex, Gemini CLI, …). The hooks are how an agent tells tty7 whether it is working, waiting for you, or done. To check what is installed:
+   ```bash
+   tty7 doctor   # look at the "agent hooks" line
+   ```
+3. **Run your agents in tty7 panes.** Start them as usual in any tab and any workspace. shipherd sees every agent pane on the machine, not just the ones in its own workspace. To see what tty7 reports right now:
+   ```bash
+   tty7 agents
+   ```
+4. **Start shipherd in a tty7 pane** as well, for example in a split next to your agents (see [Usage](#usage)).
+
+What happens without hooks:
+- If an agent has no hooks installed, shipherd shows a banner such as `status hooks not installed for claude: tty7 Settings → Integrations`. The agent is still listed, but without a status.
+- An agent that was started before its hooks were installed shows up as *idle*, marked "no status yet", until it reports its first status.
+
+Status and replies work for every agent that has tty7 hooks. One-key approve/deny of permission prompts is currently only available for Claude Code.
 
 ## Usage
 
