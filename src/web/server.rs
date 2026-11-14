@@ -17,6 +17,8 @@ const INDEX_HTML: &str = include_str!("assets/index.html");
 const APP_CSS: &str = include_str!("assets/app.css");
 const APP_JS: &str = include_str!("assets/app.js");
 const LOGIC_JS: &str = include_str!("assets/logic.js");
+const FAVICON_SVG: &str = include_str!("assets/favicon.svg");
+const LOGO_SVG: &str = include_str!("assets/shipherd-logo.svg");
 
 #[derive(Clone)]
 pub struct AppState {
@@ -61,6 +63,14 @@ pub fn router(state: AppState) -> Router {
                     APP_JS,
                 )
             }),
+        )
+        .route(
+            "/favicon.svg",
+            get(|| async { ([(header::CONTENT_TYPE, "image/svg+xml")], FAVICON_SVG) }),
+        )
+        .route(
+            "/shipherd-logo.svg",
+            get(|| async { ([(header::CONTENT_TYPE, "image/svg+xml")], LOGO_SVG) }),
         )
         .route("/ws", get(super::socket::upgrade))
         .layer(middleware::from_fn_with_state(state.clone(), guard))
@@ -253,5 +263,19 @@ mod tests {
             send(get("/logic.js")).await.status(),
             StatusCode::UNAUTHORIZED
         );
+    }
+
+    #[tokio::test]
+    async fn serves_the_favicon_as_svg() {
+        let res = send(with_cookie("/favicon.svg")).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(res.headers()[header::CONTENT_TYPE], "image/svg+xml");
+    }
+
+    #[tokio::test]
+    async fn serves_the_wordmark_as_svg() {
+        let res = send(with_cookie("/shipherd-logo.svg")).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(res.headers()[header::CONTENT_TYPE], "image/svg+xml");
     }
 }
