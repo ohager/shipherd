@@ -3,7 +3,8 @@
 use std::time::{Duration, Instant};
 
 use super::protocol::{AgentView, ClientMsg, ServerMsg};
-use crate::actions::{self, Action, KeyInput};
+use crate::actions::{Action, KeyInput};
+use crate::agents;
 use crate::fleet::Fleet;
 
 pub const INTERACT_IDLE: Duration = Duration::from_secs(120);
@@ -101,13 +102,15 @@ impl Session {
         }
 
         if let Some(pane) = self.selected
-            && let Some(text) = fleet.panes.get(&pane).and_then(|p| p.preview.as_ref())
+            && let Some(agent) = fleet.panes.get(&pane)
+            && let Some(text) = agent.preview.as_ref()
             && self.last_preview.as_ref() != Some(text)
         {
             out.push(ServerMsg::Preview {
                 pane,
                 text: text.clone(),
-                permission_prompt: actions::is_permission_prompt(text),
+                permission_prompt: agents::profile_for(&agent.agent)
+                    .is_some_and(|p| p.is_permission_prompt(text)),
             });
             self.last_preview = Some(text.clone());
         }

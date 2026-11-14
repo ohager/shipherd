@@ -2,6 +2,7 @@
 
 use serde::Deserialize;
 
+use crate::agents::{self, Keystrokes};
 use crate::fleet::Fleet;
 use crate::tty7::Tty7Cli;
 use crate::tty7::types::Status;
@@ -152,51 +153,7 @@ async fn send_interactive(cli: &dyn Tty7Cli, pane: u32, keys: &[KeyInput]) -> Ou
     Outcome::Sent
 }
 
-enum Keystrokes {
-    Text { text: String, enter: bool },
-    Key(&'static str),
-}
-
-/// How to answer an agent's permission prompt; `None` when its prompt layout is unknown.
-/// Claude Code (verified 2026-11-13): "1" is always "Yes", but "No" moves between options 3 and 4,
-/// so deny uses Esc ("Esc to cancel").
-fn prompt_keys(agent: &str, approve: bool) -> Option<Keystrokes> {
-    match (agent.to_ascii_lowercase().as_str(), approve) {
-        ("claude", true) => Some(Keystrokes::Text {
-            text: "1".into(),
-            enter: false,
-        }),
-        ("claude", false) => Some(Keystrokes::Key("escape")),
-        _ => None,
-    }
-}
-
 const PROMPT_CAPTURE_LINES: u32 = 40;
-/// A prompt occupies the bottom of the screen; older output above it may quote anything.
-const PROMPT_TAIL_LINES: usize = 20;
-
-/// Claude Code's permission prompts ask "Do you want to …?" with "1. Yes" and end in "Tab to amend".
-/// Its questions can offer "1. Yes" too, but they navigate with "Tab/Arrow keys".
-pub fn is_permission_prompt(screen: &str) -> bool {
-    let lines: Vec<&str> = screen
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .collect();
-    let tail = &lines[lines.len().saturating_sub(PROMPT_TAIL_LINES)..];
-    let asks = tail.iter().any(|l| l.starts_with("Do you want to"));
-    let offers_yes = tail
-        .iter()
-        .any(|l| l.trim_start_matches('❯').trim_start().starts_with("1. Yes"));
-    let is_question = tail
-        .iter()
-        .any(|l| l.contains("Tab/Arrow keys to navigate"));
-    asks && offers_yes && !is_question
-}
-
-pub fn supports_prompt_answers(agent: &str) -> bool {
-    prompt_keys(agent, true).is_some()
-}
 
 /// Free text during `waiting` would land in a selection menu, where typed digits pick options.
 fn allowed_statuses(action: &Action) -> &'static [Status] {
@@ -212,9 +169,10 @@ pub async fn execute(cli: &dyn Tty7Cli, fleet: &Fleet, action: &Action) -> Outco
     let Some(known) = fleet.panes.get(&pane) else {
         return Outcome::UnknownPane;
     };
+    let profile = agents::profile_for(&known.agent);
     let keystrokes = match action {
-        Action::Approve { .. } => prompt_keys(&known.agent, true),
-        Action::Deny { .. } => prompt_keys(&known.agent, false),
+        Action::Approve { .. } => profile.map(|p| p.approve()),
+        Action::Deny { .. } => profile.map(|p| p.deny()),
         Action::Reply { text, .. } => Some(Keystrokes::Text {
             text: text.clone(),
             enter: true,
@@ -246,7 +204,7 @@ pub async fn execute(cli: &dyn Tty7Cli, fleet: &Fleet, action: &Action) -> Outco
     // tty7 reports questions and permission prompts both as `waiting`; only the screen tells them apart.
     if matches!(action, Action::Approve { .. } | Action::Deny { .. }) {
         match cli.capture_plain(pane, PROMPT_CAPTURE_LINES).await {
-            Ok(screen) if is_permission_prompt(&screen) => {}
+            Ok(screen) if profile.is_some_and(|p| p.is_permission_prompt(&screen)) => {}
             Ok(_) => return Outcome::NotPermissionPrompt,
             Err(err) => return Outcome::Failed(err.to_string()),
         }
@@ -270,8 +228,6 @@ mod tests {
 
     const PERMISSION: &str = include_str!("../tests/fixtures/screens/claude-permission.txt");
     const QUESTION: &str = include_str!("../tests/fixtures/screens/claude-question.txt");
-    const YES_NO_QUESTION: &str =
-        include_str!("../tests/fixtures/screens/claude-yes-no-question.txt");
 
     /// The pane shows a permission prompt unless a test replaces its screen.
     fn tty7_reports(pane: u32, agent: &str, status: &str) -> FakeCli {
@@ -375,15 +331,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn approve_is_unsupported_for_agents_without_a_key_table() {
-        let cli = tty7_reports(60, "Codex", "waiting");
-        let fleet = fleet_with(&[(60, "Codex", Status::Waiting, 0)]);
+    async fn approve_is_unsupported_for_agents_without_a_profile() {
+        let cli = tty7_reports(60, "Aider", "waiting");
+        let fleet = fleet_with(&[(60, "Aider", Status::Waiting, 0)]);
         assert_eq!(
             execute(&cli, &fleet, &Action::Approve { pane: 60 }).await,
             Outcome::Unsupported
         );
-        assert!(!supports_prompt_answers("Codex"));
-        assert!(supports_prompt_answers("Claude"));
     }
 
     #[tokio::test]
@@ -476,14 +430,6 @@ mod tests {
                 .as_deref(),
             Some("rejected: unknown key x")
         );
-    }
-
-    #[test]
-    fn tells_permission_prompts_from_questions() {
-        assert!(is_permission_prompt(PERMISSION));
-        assert!(!is_permission_prompt(QUESTION));
-        assert!(!is_permission_prompt(YES_NO_QUESTION));
-        assert!(!is_permission_prompt("❯ \n"));
     }
 
     #[tokio::test]

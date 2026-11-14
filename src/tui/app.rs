@@ -1,6 +1,7 @@
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::actions::{self, Action};
+use crate::actions::Action;
+use crate::agents;
 use crate::fleet::{AgentPane, Fleet};
 use crate::tty7::types::Status;
 
@@ -152,7 +153,7 @@ impl App {
             self.flash = Some(format!("{agent} isn't waiting on you"));
             return None;
         }
-        if !actions::supports_prompt_answers(&pane.agent) {
+        if agents::profile_for(&pane.agent).is_none() {
             self.flash = Some(format!(
                 "approve/deny isn't supported for {agent} yet; answer in its pane"
             ));
@@ -210,7 +211,7 @@ mod tests {
     fn sample() -> Fleet {
         fleet_with(&[
             (1, "Claude", Status::Waiting, 100),
-            (2, "Codex", Status::Waiting, 200),
+            (2, "Aider", Status::Waiting, 200),
             (3, "Claude", Status::Working, 50),
             (4, "Claude", Status::Done, 10),
         ])
@@ -284,7 +285,7 @@ mod tests {
         assert_eq!(press(&mut app, &fleet, &[KeyCode::Char('y')]), None);
         assert_eq!(
             app.flash.as_deref(),
-            Some("approve/deny isn't supported for codex yet; answer in its pane")
+            Some("approve/deny isn't supported for aider yet; answer in its pane")
         );
     }
 

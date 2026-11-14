@@ -2,7 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::actions::{self, KeyInput};
+use crate::actions::KeyInput;
+use crate::agents;
 use crate::fleet::AgentPane;
 use crate::tty7::types::Proc;
 
@@ -23,10 +24,13 @@ pub struct AgentView {
     pub has_status: bool,
     /// Whether approve/deny are supported for this agent.
     pub can_answer: bool,
+    /// False when the agent's prompt layout comes from its source, not from real screens.
+    pub answer_verified: bool,
 }
 
 impl From<&AgentPane> for AgentView {
     fn from(p: &AgentPane) -> Self {
+        let profile = agents::profile_for(&p.agent);
         AgentView {
             pane: p.pane,
             agent: p.agent.to_lowercase(),
@@ -40,7 +44,8 @@ impl From<&AgentPane> for AgentView {
             launch: p.launch.clone(),
             workspace: p.workspace.clone(),
             has_status: p.has_status,
-            can_answer: actions::supports_prompt_answers(&p.agent),
+            can_answer: profile.is_some(),
+            answer_verified: profile.is_some_and(|p| p.verified()),
         }
     }
 }
@@ -125,6 +130,7 @@ mod tests {
         assert_eq!(view.status, "waiting");
         assert_eq!(view.since_ms, 1_000);
         assert!(view.can_answer);
+        assert!(view.answer_verified);
     }
 
     #[test]
