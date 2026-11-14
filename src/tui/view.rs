@@ -4,7 +4,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use super::app::App;
+use super::app::{App, Grouping};
 use crate::fleet::{AgentPane, Fleet, format_elapsed};
 use crate::tty7::types::Status;
 
@@ -70,6 +70,9 @@ fn header_line(fleet: &Fleet, app: &App, width: u16) -> Line<'static> {
             Style::new().fg(Color::Yellow),
         ));
     }
+    if app.grouping == Grouping::Workspace {
+        spans.push(Span::styled("  by workspace", Style::new().fg(Color::Cyan)));
+    }
     // A cut-off URL ("…:777") looks valid but points nowhere, so it's all or nothing.
     if let Some(url) = &app.web_url {
         let url = Span::styled(format!("  {url}"), dim());
@@ -96,34 +99,63 @@ fn list_lines(
     now_ms: u64,
     width: u16,
 ) -> (Vec<Line<'static>>, Option<usize>) {
-    let ordered = fleet.ordered();
-    if ordered.is_empty() {
+    if fleet.panes.is_empty() {
         return (vec![Line::styled("no agents running in tty7", dim())], None);
     }
+    // Rows by workspace say the status in the column that otherwise names the workspace.
+    let slot = match app.grouping {
+        Grouping::Status => Slot::Workspace,
+        Grouping::Workspace => Slot::Status,
+    };
     let mut selected_line = None;
     let mut lines = Vec::new();
-    for (status, title) in GROUPS {
-        let group: Vec<&AgentPane> = ordered
-            .iter()
-            .copied()
-            .filter(|p| p.status == status)
-            .collect();
-        if group.is_empty() {
-            continue;
-        }
-        let heading = Style::new()
-            .fg(status_color(status))
-            .add_modifier(Modifier::BOLD);
-        lines.push(Line::styled(title, heading));
+    for (heading, group) in sections(fleet, app.grouping) {
+        lines.push(heading);
         for pane in group {
             let selected = app.selected == Some(pane.pane);
             if selected {
                 selected_line = Some(lines.len());
             }
-            lines.push(agent_line(pane, selected, now_ms, usize::from(width)));
+            lines.push(agent_line(pane, slot, selected, now_ms, usize::from(width)));
         }
     }
     (lines, selected_line)
+}
+
+/// Non-empty sections with their headings, in the order `App::ordered` walks them.
+fn sections(fleet: &Fleet, grouping: Grouping) -> Vec<(Line<'static>, Vec<&AgentPane>)> {
+    let bold = Style::new().add_modifier(Modifier::BOLD);
+    match grouping {
+        Grouping::Status => {
+            let ordered = fleet.ordered();
+            GROUPS
+                .into_iter()
+                .filter_map(|(status, title)| {
+                    let group: Vec<&AgentPane> = ordered
+                        .iter()
+                        .copied()
+                        .filter(|p| p.status == status)
+                        .collect();
+                    (!group.is_empty())
+                        .then(|| (Line::styled(title, bold.fg(status_color(status))), group))
+                })
+                .collect()
+        }
+        Grouping::Workspace => fleet
+            .by_workspace()
+            .into_iter()
+            .map(|(workspace, group)| {
+                let title = format!("{} ({})", workspace.unwrap_or("other"), group.len());
+                (Line::styled(title, bold.fg(Color::Cyan)), group)
+            })
+            .collect(),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Slot {
+    Workspace,
+    Status,
 }
 
 /// Scrolls just far enough that the selected line is the last visible one.
@@ -139,7 +171,13 @@ const TIME_WIDTH: usize = 7;
 /// Dot, agent and time, with their separating spaces.
 const ROW_BASE_WIDTH: usize = 1 + 1 + AGENT_WIDTH + 1 + TIME_WIDTH;
 
-fn agent_line(pane: &AgentPane, selected: bool, now_ms: u64, width: usize) -> Line<'static> {
+fn agent_line(
+    pane: &AgentPane,
+    slot: Slot,
+    selected: bool,
+    now_ms: u64,
+    width: usize,
+) -> Line<'static> {
     // Without a reported status, the time since shipherd first saw the agent means nothing.
     let elapsed = if pane.has_status {
         format_elapsed(
@@ -158,7 +196,11 @@ fn agent_line(pane: &AgentPane, selected: bool, now_ms: u64, width: usize) -> Li
         fit(&pane.agent.to_lowercase(), AGENT_WIDTH)
     );
     if show_workspace {
-        text += &format!(" {:<12}", fit(pane.workspace.as_deref().unwrap_or("-"), 12));
+        let value = match slot {
+            Slot::Workspace => pane.workspace.as_deref().unwrap_or("-"),
+            Slot::Status => pane.status.label(),
+        };
+        text += &format!(" {:<12}", fit(value, 12));
     }
     if show_repo {
         text += &format!(" {:<12}", fit(pane.repo.as_deref().unwrap_or("-"), 12));
@@ -214,8 +256,9 @@ fn preview_lines(fleet: &Fleet, app: &App, height: u16) -> Vec<Line<'static>> {
     lines
 }
 
-const KEYS_HINT: &str = "↑↓ select · y approve · n deny · r reply · x close · w web · q quit";
-const KEYS_HINT_SHORT: &str = "↑↓ y n r x w q";
+const KEYS_HINT: &str =
+    "↑↓ select · y approve · n deny · r reply · x close · g group · w web · q quit";
+const KEYS_HINT_SHORT: &str = "↑↓ y n r x g w q";
 
 fn footer_line(fleet: &Fleet, app: &App, width: u16) -> Line<'static> {
     if let Some(pane) = app.confirm_close {
@@ -251,6 +294,7 @@ mod tests {
     use crate::fleet::Connection;
     use crate::fleet::testing::fleet_with;
     use crate::tty7::types::AgentsResponse;
+    use crate::tui::app::Grouping;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -361,7 +405,9 @@ mod tests {
     fn footer_lists_the_keys() {
         let wide = draw_sized(&sample(), &App::default(), 80, 20);
         assert!(
-            wide.contains("↑↓ select · y approve · n deny · r reply · x close · w web · q quit"),
+            wide.contains(
+                "↑↓ select · y approve · n deny · r reply · x close · g group · w web · q quit"
+            ),
             "{wide}"
         );
         let narrow = draw_sized(&sample(), &App::default(), 40, 20);
@@ -371,7 +417,7 @@ mod tests {
                 .last()
                 .unwrap()
                 .trim_end()
-                .ends_with("↑↓ y n r x w q"),
+                .ends_with("↑↓ y n r x g w q"),
             "{narrow}"
         );
     }
@@ -502,6 +548,52 @@ mod tests {
             has(&row(25), ["PR Reviews", "hermes", "main", "41s"]),
             [false, false, false, true]
         );
+    }
+
+    #[test]
+    fn by_workspace_sections_are_titled_with_counts_and_rows_show_the_status() {
+        let mut fleet = fleet_with(&[
+            (1, "Claude", Status::Waiting, NOW - 125_000),
+            (2, "Claude", Status::Working, NOW - 41_000),
+            (3, "Claude", Status::Done, NOW - 10_000),
+        ]);
+        fleet.set_detected(
+            vec![
+                crate::fleet::testing::detected(1, "reviews", "a"),
+                crate::fleet::testing::detected(2, "Default", "b"),
+                crate::fleet::testing::detected(3, "reviews", "c"),
+            ],
+            NOW,
+        );
+        let app = App {
+            grouping: Grouping::Workspace,
+            ..App::default()
+        };
+        let screen = draw(&fleet, &app);
+        let default = screen.find("Default (1)").expect("Default heading");
+        let reviews = screen.find("reviews (2)").expect("reviews heading");
+        assert!(default < reviews, "{screen}");
+        assert!(!screen.contains("NEEDS YOU"), "{screen}");
+        let row = |time: &str| screen.lines().find(|l| l.contains(time)).unwrap();
+        assert!(row("2m05s").contains("needs you"), "{screen}");
+        assert!(row("41s").contains("working"), "{screen}");
+        assert!(!row("41s").contains("Default"), "{screen}");
+    }
+
+    #[test]
+    fn the_header_says_when_grouped_by_workspace() {
+        let app = App {
+            grouping: Grouping::Workspace,
+            ..App::default()
+        };
+        let header = draw(&sample(), &app).lines().next().unwrap().to_string();
+        assert!(header.contains("by workspace"), "{header}");
+        let header = draw(&sample(), &App::default())
+            .lines()
+            .next()
+            .unwrap()
+            .to_string();
+        assert!(!header.contains("by workspace"), "{header}");
     }
 
     #[test]
