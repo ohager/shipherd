@@ -8,6 +8,13 @@ use crate::fleet::AgentPane;
 use crate::tty7::types::Proc;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct BackgroundView {
+    pub kind: String,
+    pub description: String,
+    pub since_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct AgentView {
     pub pane: u32,
     pub agent: String,
@@ -26,6 +33,9 @@ pub struct AgentView {
     pub can_answer: bool,
     /// False when the agent's prompt layout comes from its source, not from real screens.
     pub answer_verified: bool,
+    /// The board column: `status`, except finished agents with background work are "working".
+    pub group: &'static str,
+    pub background: Vec<BackgroundView>,
 }
 
 impl From<&AgentPane> for AgentView {
@@ -46,6 +56,16 @@ impl From<&AgentPane> for AgentView {
             has_status: p.has_status,
             can_answer: profile.is_some(),
             answer_verified: profile.is_some_and(|p| p.verified()),
+            group: p.board_status().key(),
+            background: p
+                .background
+                .iter()
+                .map(|t| BackgroundView {
+                    kind: t.kind.clone(),
+                    description: t.description.clone(),
+                    since_ms: t.since_ms,
+                })
+                .collect(),
         }
     }
 }
@@ -119,6 +139,7 @@ pub enum ClientMsg {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agents::BackgroundTask;
     use crate::fleet::testing::fleet_with;
     use crate::tty7::types::Status;
 
@@ -181,5 +202,22 @@ mod tests {
     fn close_parses() {
         let msg: ClientMsg = serde_json::from_str(r#"{"type":"close","id":3,"pane":22}"#).unwrap();
         assert_eq!(msg, ClientMsg::Close { id: 3, pane: 22 });
+    }
+
+    #[test]
+    fn agent_view_carries_background_work_and_its_board_column() {
+        let mut fleet = fleet_with(&[(1, "Claude", Status::Done, 0)]);
+        let task = BackgroundTask {
+            kind: "researcher".into(),
+            description: "Locating".into(),
+            since_ms: 5,
+        };
+        fleet.set_background(&std::collections::HashMap::from([(1, vec![task])]));
+        let view = AgentView::from(&fleet.panes[&1]);
+        assert_eq!(view.status, "done");
+        assert_eq!(view.group, "working");
+        assert_eq!(view.background.len(), 1);
+        assert_eq!(view.background[0].kind, "researcher");
+        assert_eq!(view.background[0].since_ms, 5);
     }
 }

@@ -113,7 +113,14 @@
     return pieces;
   }
 
-  const api = { workspaceColor, elapsed, nextSelection, groupByWorkspace, paneFromHash, hashForPane, toKey, mergeText, linkify };
+  /** "researcher · Locating prompts · 3m57s" per running background agent. */
+  function backgroundLines(agent, now) {
+    return (agent.background || []).map((task) =>
+      [task.kind, task.description, elapsed({ has_status: true, exact: true, since_ms: task.since_ms }, now)]
+        .filter(Boolean).join(" · "));
+  }
+
+  const api = { workspaceColor, elapsed, backgroundLines, nextSelection, groupByWorkspace, paneFromHash, hashForPane, toKey, mergeText, linkify };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ShipherdLogic = api;
 })(this);

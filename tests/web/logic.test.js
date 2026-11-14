@@ -99,3 +99,11 @@ test("links leave trailing punctuation and unbalanced brackets in the text", () 
   assert.deepEqual(logic.linkify("<https://x.io>"), [{ text: "<" }, { url: "https://x.io" }, { text: ">" }]);
   assert.deepEqual(logic.linkify("https:// nothing"), [{ text: "https:// nothing" }]);
 });
+
+test("background agents read like the TUI's preview lines", () => {
+  const now = 1_000_000;
+  const agent = { background: [{ kind: "researcher", description: "Locating prompts", since_ms: now - 237_000 }] };
+  assert.deepEqual(logic.backgroundLines(agent, now), ["researcher · Locating prompts · 3m57s"]);
+  assert.deepEqual(logic.backgroundLines({ background: [] }, now), []);
+  assert.deepEqual(logic.backgroundLines({}, now), []);
+});

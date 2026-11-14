@@ -105,6 +105,7 @@ button.danger-outline { background: none; color: #f08080; border: 1px solid #8e2
 .pill.waiting { background: var(--waiting); }
 .pill.working { background: var(--working); }
 .pill.done { background: var(--done); }
+.pill.background { background: var(--working); }
 .pill:empty { display: none; }
 #d-meta { color: var(--dim); font-size: 12px; }
 #d-facts { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 0; font-size: 12px; }

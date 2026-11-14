@@ -35,7 +35,7 @@ function badge(workspace) {
 
 // Every agent is "claude", so the task is what tells them apart.
 const displayTitle = (agent) => agent.title || agent.agent;
-const groupOf = (agent) => (COLUMNS.includes(agent.status) ? agent.status : "other");
+const groupOf = (agent) => (COLUMNS.includes(agent.group) ? agent.group : "other");
 const elapsed = (agent) => L.elapsed(agent, Date.now());
 
 const byWorkspace = () => state.grouping === "workspace";
@@ -183,6 +183,12 @@ function card(agent) {
   } else {
     top.append(el("span", "dot"), badge(agent.workspace), el("span", "elapsed", elapsed(agent)));
   }
+  const background = L.backgroundLines(agent, Date.now());
+  if (background.length > 0) {
+    const pill = el("span", "pill background", `⟳ ${background.length} background`);
+    pill.title = background.join("\n");
+    top.append(pill);
+  }
   const where = [agent.repo, agent.branch].filter(Boolean).join(" · ") || agent.cwd || "";
   node.append(top, el("div", "title", displayTitle(agent)), el("div", "where", where));
 
@@ -211,7 +217,7 @@ function renderBoard() {
   }
   for (const status of COLUMNS) {
     const column = document.querySelector(`.column[data-status="${status}"] .cards`);
-    column.replaceChildren(...state.agents.filter((a) => a.status === status).map(card));
+    column.replaceChildren(...state.agents.filter((a) => a.group === status).map(card));
   }
   const idle = state.agents.filter((a) => groupOf(a) === "other");
   document.querySelector("#idle .count").textContent = `(${idle.length})`;
@@ -304,6 +310,7 @@ function renderDetail() {
     ["command", agent.launch.join(" ") || "–"],
   ];
   if (!agent.has_status) rows.unshift(["status", "no status yet (its hooks haven't fired)"]);
+  for (const line of L.backgroundLines(agent, Date.now())) rows.push(["background", line]);
   $("d-facts").replaceChildren(...rows.flatMap(([label, value]) => [el("dt", null, label), el("dd", null, value)]));
 
   // The server refuses approve/deny on questions anyway; hiding them avoids the confusion.
