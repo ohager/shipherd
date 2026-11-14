@@ -36,6 +36,23 @@
     return agents[next].pane;
   }
 
+  /** One group per workspace, case-insensitive alphabetical, agents without one last (`null`).
+   *  Keeps the given order inside each group, so the server's status order carries over. */
+  function groupByWorkspace(agents) {
+    const groups = new Map();
+    for (const agent of agents) {
+      const workspace = agent.workspace || null;
+      if (!groups.has(workspace)) groups.set(workspace, []);
+      groups.get(workspace).push(agent);
+    }
+    return [...groups]
+      .map(([workspace, members]) => ({ workspace, agents: members }))
+      .sort((a, b) => {
+        if (a.workspace === null || b.workspace === null) return (a.workspace === null) - (b.workspace === null);
+        return a.workspace.localeCompare(b.workspace, undefined, { sensitivity: "base" });
+      });
+  }
+
   function paneFromHash(hash) {
     const match = /^#pane-(\d+)$/.exec(hash);
     return match ? Number(match[1]) : null;
@@ -68,7 +85,7 @@
     return merged;
   }
 
-  const api = { workspaceColor, elapsed, nextSelection, paneFromHash, hashForPane, toKey, mergeText };
+  const api = { workspaceColor, elapsed, nextSelection, groupByWorkspace, paneFromHash, hashForPane, toKey, mergeText };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ShipherdLogic = api;
 })(this);

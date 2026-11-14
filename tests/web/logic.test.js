@@ -64,3 +64,18 @@ test("consecutive text keys are merged", () => {
     { kind: "text", value: "!" },
   ]);
 });
+
+test("grouping by workspace sorts the workspaces and keeps the server's order inside", () => {
+  // The server sends agents by status, longest in it first.
+  const agents = [
+    { pane: 1, workspace: "reviews" },
+    { pane: 2, workspace: null },
+    { pane: 3, workspace: "Default" },
+    { pane: 4, workspace: "reviews" },
+    { pane: 5, workspace: "alpha" },
+  ];
+  const groups = logic.groupByWorkspace(agents);
+  assert.deepEqual(groups.map((g) => g.workspace), ["alpha", "Default", "reviews", null]);
+  assert.deepEqual(groups.map((g) => g.agents.map((a) => a.pane)), [[5], [3], [1, 4], [2]]);
+  assert.deepEqual(logic.groupByWorkspace([]), []);
+});
