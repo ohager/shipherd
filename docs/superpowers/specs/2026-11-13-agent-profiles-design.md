@@ -33,7 +33,8 @@ A strategy per agent behind one trait, in a new module:
 
 ```
 src/agents/
-  mod.rs        AgentProfile, profile_for, Keystrokes, SessionRef, BackgroundTask
+  mod.rs        AgentProfile, profile_for, Keystrokes, BackgroundTask, BackgroundTarget, background_for
+  background.rs reads Claude Code's subagent transcripts
   claude.rs     verified
   codex.rs      unverified
   gemini.rs     unverified
@@ -50,7 +51,7 @@ pub trait AgentProfile: Sync {
     fn approve(&self) -> Keystrokes;
     fn deny(&self) -> Keystrokes;
     /// Background work the status hooks don't report. Default: none.
-    fn background_work(&self, _session: &SessionRef) -> Vec<BackgroundTask> {
+    fn background_work(&self, _session_id: &str, _now_ms: u64) -> Vec<BackgroundTask> {
         Vec::new()
     }
 }
@@ -91,20 +92,21 @@ Decisions and known risks:
 Claude Code's background agents keep working after the main turn has ended; tty7 then reports the pane as `done`. Claude Code writes each subagent's transcript next to the session:
 
 ```
-<config>/projects/<cwd-slug>/<session_id>/subagents/agent-<id>.jsonl
-<config>/projects/<cwd-slug>/<session_id>/subagents/agent-<id>.meta.json   {"agentType", "description", "requestShape", …}
+<config>/projects/<project>/<session_id>/subagents/agent-<id>.jsonl
+<config>/projects/<project>/<session_id>/subagents/agent-<id>.meta.json   {"agentType", "description", "requestShape", …}
 ```
 
-- `<config>` is `$CLAUDE_CONFIG_DIR`, else `~/.claude`. `<cwd-slug>` is the pane's cwd with `/` and `.` replaced by `-`.
-- `SessionRef { session_id, cwd }` comes from `tty7 agents --json` (`state.session_id`, `state.cwd`); the adapter parses both.
-- **Path safety:** a `session_id` with characters outside `[0-9a-f-]` is ignored; the slug is built only from the cwd tty7 reports and checked to be a single path component.
+- `<config>` is `$CLAUDE_CONFIG_DIR`, else `~/.claude`. The directory is found by searching `<config>/projects/*/<session_id>/subagents`: session ids are UUIDs, so the match is unique, and Claude Code's slug of the cwd (`/.claude/` becomes `--claude`, other rules unknown) needn't be rebuilt.
+- The `session_id` comes from `tty7 agents --json` (`state.session_id`), so it arrives with the next resync.
+- **Path safety:** a `session_id` with characters outside `[0-9a-f-]` is ignored, so it can't point outside the projects directory.
 - **Running:** the transcript's last line is not an `assistant` message with `stop_reason: "end_turn"`, and the file changed in the last 30 minutes. (Checked 2026-11-13 against 30 transcripts: every finished one ends that way; a running one ended in a `thinking` block with `stop_reason: null`.) The 30-minute cutoff drops agents that were stopped or whose session crashed, which never write `end_turn`.
-- **Cost:** a background worker, like the git and capture workers, checks the modification times every 5 s for Claude panes. It reads the last 64 KB of a transcript only when its modification time changed, and the `.meta.json` once per agent.
+- **Cost:** a background worker, like the git and capture workers, scans every 5 s (off the core loop with `spawn_blocking`). Transcripts not modified in the last 30 minutes are skipped after a `stat`; the rest have their last 64 KB read.
+- **Known gap (seen 2026-11-13):** a subagent that started a background shell of its own and ended its turn writes `end_turn` while Claude Code still counts it as running; shipherd shows it as finished.
 - **Unknown format or missing directory:** no background work; logged once per pane, no banner. The format is internal to Claude Code and may change.
 
 ### Fleet and views
 
-- Each pane gets `background: Vec<BackgroundTask { kind, description, since }>` (`kind` = `agentType`, `since` = when shipherd first saw it running).
+- Each pane gets `background: Vec<BackgroundTask { kind, description, since }>` (`kind` = `agentType`, `since` = the modification time of its `.meta.json`, written when it starts).
 - **Grouping:** a `done` or `idle` agent with background work sorts as **working**, in both views and both layouts. Its status stays `done`/`idle`, so reply stays allowed.
 - **TUI:** the row's status reads `done · ⟳1`; the preview area lists the background agents (`researcher · Locating … · 3m 57s`).
 - **Web:** cards get a `⟳ 1 background` pill with the descriptions in its tooltip; the focus view gets a line `background: researcher · Locating … · 3m 57s` per agent.

@@ -78,7 +78,21 @@ What happens without hooks:
 - If an agent has no hooks installed, shipherd shows a banner such as `status hooks not installed for claude: tty7 Settings → Integrations`. The agent is still listed, but without a status.
 - An agent that was started before its hooks were installed shows up as *idle*, marked "no status yet", until it reports its first status.
 
-Status and replies work for every agent that has tty7 hooks. One-key approve/deny of permission prompts is currently only available for Claude Code.
+Status and replies work for every agent that has tty7 hooks; see [Supported agents](#supported-agents) for approve/deny.
+
+## Supported agents
+
+| Agent | Status, reply, interact | Approve / deny | Verified |
+|---|---|---|---|
+| Claude Code | ✓ | `1` / Esc | ✓ |
+| Codex | ✓ | `y` / Esc | – |
+| Gemini CLI | ✓ | `1` / Esc | – |
+| OpenCode | ✓ | Enter / Esc | – |
+| Others with tty7 hooks | ✓ | – | – |
+
+"Verified" means the prompt detection was checked against the agent's real screens. For the others it is derived from their source code, and the TUI and dashboard mark their approve/deny as unverified. If you use one of them, a capture of a permission prompt (`tty7 capture %N --plain`) is very welcome as an issue.
+
+For Claude Code, shipherd also shows background agents that keep running after the main turn. The agent stays under *Working* and shows `⟳`, and its background agents are listed in the preview and in the focus view.
 
 ## Usage
 
@@ -170,7 +184,8 @@ After changing the dist config, run `dist generate` to regenerate the workflow, 
 
 ## Limitations
 
-- Approve/deny key sequences are only known for Claude Code so far; other agents get reply and interact.
+- Approve/deny is verified for Claude Code only; for Codex, Gemini CLI and OpenCode it is derived from their source.
+- Background agents are only shown for Claude Code, and not while a subagent has ended its turn but still waits for a background shell of its own.
 - Local machine only (no remote tty7 hosts yet).
 - No Windows support.
 
