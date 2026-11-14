@@ -16,7 +16,12 @@ use crate::tty7::detect::{self, DetectedPane};
 use crate::tty7::types::{Event, ProcsResponse, parse_event};
 
 pub const PREVIEW_LINES: u32 = 200;
-const PREVIEW_EVERY: Duration = Duration::from_millis(400);
+/// tty7 redraws a pane on every capture, which shows as a flicker, so captures are spaced out:
+/// every 2 s, slowing to every 5 s while the screen doesn't change, and fast only right after keys.
+const PREVIEW_NORMAL: Duration = Duration::from_secs(2);
+const PREVIEW_SLOWEST: Duration = Duration::from_secs(5);
+const PREVIEW_FAST: Duration = Duration::from_millis(400);
+const FAST_AFTER_KEYS: Duration = Duration::from_secs(5);
 /// Also how closed panes disappear: the close event's shape hasn't been recorded yet.
 const RESYNC_EVERY: Duration = Duration::from_secs(10);
 /// One detection pass is ~11 tty7 calls (one per workspace), so it runs less often than resync.
@@ -390,6 +395,39 @@ async fn detect_worker(cli: Arc<dyn Tty7Cli>, detected: mpsc::Sender<Vec<Detecte
     }
 }
 
+/// The pause between capture rounds.
+#[derive(Debug, Default)]
+struct Pace {
+    unchanged_rounds: u32,
+    fast_until: Option<Instant>,
+}
+
+impl Pace {
+    fn delay(&self, now: Instant) -> Duration {
+        if self.fast_until.is_some_and(|until| now < until) {
+            return PREVIEW_FAST;
+        }
+        (PREVIEW_NORMAL + Duration::from_secs(u64::from(self.unchanged_rounds)))
+            .min(PREVIEW_SLOWEST)
+    }
+
+    fn after_round(&mut self, changed: bool) {
+        self.unchanged_rounds = if changed {
+            0
+        } else {
+            self.unchanged_rounds.saturating_add(1)
+        };
+    }
+
+    fn after_keys(&mut self, now: Instant) {
+        self.fast_until = Some(now + FAST_AFTER_KEYS);
+    }
+
+    fn reset(&mut self) {
+        self.unchanged_rounds = 0;
+    }
+}
+
 /// Captures run here, outside the core loop: a Claude Code pane takes ~300 ms to capture, and
 /// keystrokes must not queue behind that (tty7 itself serves requests in parallel).
 async fn capture_worker(
@@ -398,6 +436,8 @@ async fn capture_worker(
     captured: mpsc::Sender<Capture>,
     capture_now: Arc<Notify>,
 ) {
+    let mut pace = Pace::default();
+    let mut last: HashMap<u32, String> = HashMap::new();
     loop {
         let panes = targets.borrow_and_update().clone();
         if panes.is_empty() {
@@ -406,22 +446,32 @@ async fn capture_worker(
             }
             continue;
         }
+        last.retain(|pane, _| panes.contains(pane));
+        let mut changed = false;
         for pane in panes {
             let result = cli.capture_plain(pane, PREVIEW_LINES).await;
+            if let Ok(text) = &result
+                && last.get(&pane) != Some(text)
+            {
+                last.insert(pane, text.clone());
+                changed = true;
+            }
             if captured.send(Capture { pane, result }).await.is_err() {
                 return;
             }
         }
+        pace.after_round(changed);
         // Pausing after each round, not on a fixed tick, keeps slow captures from running back to
         // back. A new selection cuts the pause short so it shows up right away.
         tokio::select! {
-            _ = sleep(PREVIEW_EVERY) => {}
+            _ = sleep(pace.delay(Instant::now())) => {}
             // A notification during a capture is kept, so keys typed meanwhile trigger one more round.
-            _ = capture_now.notified() => {}
+            _ = capture_now.notified() => pace.after_keys(Instant::now()),
             changed = targets.changed() => {
                 if changed.is_err() {
                     return;
                 }
+                pace.reset();
             }
         }
     }
@@ -431,6 +481,51 @@ async fn next_line(events: &mut Option<mpsc::Receiver<String>>) -> Option<String
     match events {
         Some(rx) => rx.recv().await,
         None => std::future::pending().await,
+    }
+}
+
+#[cfg(test)]
+mod pace_tests {
+    use super::*;
+
+    #[test]
+    fn unchanged_screens_are_captured_less_and_less_often() {
+        let now = Instant::now();
+        let mut pace = Pace::default();
+        assert_eq!(pace.delay(now), Duration::from_secs(2));
+        let delays: Vec<u64> = (0..5)
+            .map(|_| {
+                pace.after_round(false);
+                pace.delay(now).as_secs()
+            })
+            .collect();
+        assert_eq!(delays, vec![3, 4, 5, 5, 5]);
+        pace.after_round(true);
+        assert_eq!(pace.delay(now), Duration::from_secs(2));
+    }
+
+    #[test]
+    fn keys_make_it_fast_for_a_few_seconds() {
+        let now = Instant::now();
+        let mut pace = Pace::default();
+        pace.after_keys(now);
+        assert_eq!(pace.delay(now), PREVIEW_FAST);
+        assert_eq!(
+            pace.delay(now + FAST_AFTER_KEYS - Duration::from_millis(1)),
+            PREVIEW_FAST
+        );
+        assert_eq!(pace.delay(now + FAST_AFTER_KEYS), Duration::from_secs(2));
+    }
+
+    #[test]
+    fn a_new_selection_starts_at_the_normal_pace() {
+        let now = Instant::now();
+        let mut pace = Pace::default();
+        for _ in 0..4 {
+            pace.after_round(false);
+        }
+        pace.reset();
+        assert_eq!(pace.delay(now), Duration::from_secs(2));
     }
 }
 
