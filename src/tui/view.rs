@@ -49,7 +49,7 @@ pub fn render(frame: &mut Frame, fleet: &Fleet, app: &App, now_ms: u64) {
     let offset = scroll_offset(selected_line, list.height);
     frame.render_widget(Paragraph::new(lines).scroll((offset, 0)), list);
     frame.render_widget(
-        Paragraph::new(preview_lines(fleet, app, preview.height)),
+        Paragraph::new(preview_lines(fleet, app, preview.height, now_ms)),
         preview,
     );
     frame.render_widget(
@@ -134,7 +134,7 @@ fn sections(fleet: &Fleet, grouping: Grouping) -> Vec<(Line<'static>, Vec<&Agent
                     let group: Vec<&AgentPane> = ordered
                         .iter()
                         .copied()
-                        .filter(|p| p.status == status)
+                        .filter(|p| p.board_status() == status)
                         .collect();
                     (!group.is_empty())
                         .then(|| (Line::styled(title, bold.fg(status_color(status))), group))
@@ -197,10 +197,10 @@ fn agent_line(
     );
     if show_workspace {
         let value = match slot {
-            Slot::Workspace => pane.workspace.as_deref().unwrap_or("-"),
-            Slot::Status => pane.status.label(),
+            Slot::Workspace => pane.workspace.clone().unwrap_or_else(|| "-".into()),
+            Slot::Status => status_text(pane),
         };
-        text += &format!(" {:<12}", fit(value, 12));
+        text += &format!(" {:<12}", fit(&value, 12));
     }
     if show_repo {
         text += &format!(" {:<12}", fit(pane.repo.as_deref().unwrap_or("-"), 12));
@@ -209,8 +209,13 @@ fn agent_line(
         text += &format!(" {:<14}", fit(pane.branch.as_deref().unwrap_or("-"), 14));
     }
     text += &format!(" {elapsed:>TIME_WIDTH$}");
+    let marker = if pane.background.is_empty() {
+        "●"
+    } else {
+        "⟳"
+    };
     let line = Line::from(vec![
-        Span::styled("●", Style::new().fg(status_color(pane.status))),
+        Span::styled(marker, Style::new().fg(status_color(pane.board_status()))),
         Span::raw(text),
     ]);
     if selected {
@@ -230,7 +235,15 @@ fn fit(text: &str, width: usize) -> String {
     }
 }
 
-fn preview_lines(fleet: &Fleet, app: &App, height: u16) -> Vec<Line<'static>> {
+/// "done ⟳1" while background agents run after the main turn.
+fn status_text(pane: &AgentPane) -> String {
+    match pane.background.len() {
+        0 => pane.status.label().to_string(),
+        n => format!("{} ⟳{n}", pane.status.label()),
+    }
+}
+
+fn preview_lines(fleet: &Fleet, app: &App, height: u16, now_ms: u64) -> Vec<Line<'static>> {
     let mut lines = vec![Line::styled("─".repeat(200), dim())];
     let input = app.reply.as_ref().map(|buffer| {
         Line::from(vec![
@@ -238,12 +251,25 @@ fn preview_lines(fleet: &Fleet, app: &App, height: u16) -> Vec<Line<'static>> {
             Span::raw(format!("{buffer}▏")),
         ])
     });
-    let room = (height as usize).saturating_sub(1 + usize::from(input.is_some()));
-    let preview = app
-        .selected
-        .and_then(|id| fleet.panes.get(&id))
-        .and_then(|p| p.preview.as_deref())
-        .unwrap_or("");
+    let selected = app.selected.and_then(|id| fleet.panes.get(&id));
+    let background: Vec<Line<'static>> = selected
+        .map(|p| {
+            p.background
+                .iter()
+                .map(|t| {
+                    let age = format_elapsed(now_ms.saturating_sub(t.since_ms), true);
+                    Line::styled(
+                        format!("⟳ {} · {} · {age}", t.kind, t.description),
+                        Style::new().fg(Color::Blue),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let room =
+        (height as usize).saturating_sub(1 + usize::from(input.is_some()) + background.len());
+    lines.extend(background);
+    let preview = selected.and_then(|p| p.preview.as_deref()).unwrap_or("");
     let all: Vec<&str> = preview.lines().collect();
     // Full-screen agents pad their output with blank lines; show the last lines with content.
     let end = all
@@ -291,6 +317,7 @@ fn footer_line(fleet: &Fleet, app: &App, width: u16) -> Line<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agents::BackgroundTask;
     use crate::fleet::Connection;
     use crate::fleet::testing::fleet_with;
     use crate::tty7::types::AgentsResponse;
@@ -606,5 +633,53 @@ mod tests {
         let header = narrow.lines().next().unwrap();
         assert!(!header.contains("http"), "{header}");
         assert!(header.contains("1 need you"), "{header}");
+    }
+
+    fn with_background(fleet: &mut Fleet, pane: u32) {
+        let task = BackgroundTask {
+            kind: "researcher".into(),
+            description: "Locating prompts".into(),
+            since_ms: NOW - 237_000,
+        };
+        fleet.set_background(&std::collections::HashMap::from([(pane, vec![task])]));
+    }
+
+    #[test]
+    fn finished_agents_with_background_work_are_listed_under_working() {
+        let mut fleet = fleet_with(&[(1, "Claude", Status::Done, NOW - 10_000)]);
+        with_background(&mut fleet, 1);
+        let screen = draw(&fleet, &App::default());
+        assert!(screen.contains("WORKING"), "{screen}");
+        assert!(!screen.contains("DONE"), "{screen}");
+        assert!(screen.contains('⟳'), "{screen}");
+    }
+
+    #[test]
+    fn the_preview_lists_background_agents_first() {
+        let mut fleet = fleet_with(&[(1, "Claude", Status::Done, NOW - 10_000)]);
+        with_background(&mut fleet, 1);
+        fleet.set_preview(1, "last output line".into());
+        let app = App {
+            selected: Some(1),
+            ..App::default()
+        };
+        let screen = draw(&fleet, &app);
+        assert!(
+            screen.contains("⟳ researcher · Locating prompts · 3m57s"),
+            "{screen}"
+        );
+        assert!(screen.contains("last output line"), "{screen}");
+    }
+
+    #[test]
+    fn by_workspace_rows_say_done_with_background_count() {
+        let mut fleet = fleet_with(&[(1, "Claude", Status::Done, NOW - 10_000)]);
+        with_background(&mut fleet, 1);
+        let app = App {
+            grouping: Grouping::Workspace,
+            ..App::default()
+        };
+        let screen = draw(&fleet, &app);
+        assert!(screen.contains("done ⟳1"), "{screen}");
     }
 }
