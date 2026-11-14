@@ -1,7 +1,7 @@
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::actions::{self, Action};
-use crate::fleet::Fleet;
+use crate::fleet::{AgentPane, Fleet};
 use crate::tty7::types::Status;
 
 /// TUI state that isn't part of the fleet. Selection is a pane id, not an index, so it
@@ -17,6 +17,15 @@ pub struct App {
     pub web_url: Option<String>,
     /// The pane `x` asked about; only `y` next closes it.
     pub confirm_close: Option<u32>,
+    pub grouping: Grouping,
+}
+
+/// How the list is sectioned; `g` switches.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Grouping {
+    #[default]
+    Status,
+    Workspace,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -27,12 +36,24 @@ pub enum Command {
 }
 
 impl App {
+    /// The agents in the order they're drawn, which is also the order `↑/↓` walk.
+    pub fn ordered<'a>(&self, fleet: &'a Fleet) -> Vec<&'a AgentPane> {
+        match self.grouping {
+            Grouping::Status => fleet.ordered(),
+            Grouping::Workspace => fleet
+                .by_workspace()
+                .into_iter()
+                .flat_map(|(_, panes)| panes)
+                .collect(),
+        }
+    }
+
     pub fn sync_selection(&mut self, fleet: &Fleet) {
         if !self
             .selected
             .is_some_and(|id| fleet.panes.contains_key(&id))
         {
-            self.selected = fleet.ordered().first().map(|p| p.pane);
+            self.selected = self.ordered(fleet).first().map(|p| p.pane);
         }
     }
 
@@ -64,6 +85,13 @@ impl App {
                 None
             }
             KeyCode::Char('w') => Some(Command::OpenWeb),
+            KeyCode::Char('g') => {
+                self.grouping = match self.grouping {
+                    Grouping::Status => Grouping::Workspace,
+                    Grouping::Workspace => Grouping::Status,
+                };
+                None
+            }
             KeyCode::Char('x') => {
                 self.confirm_close = self.selected;
                 None
@@ -104,7 +132,7 @@ impl App {
     }
 
     fn move_selection(&mut self, fleet: &Fleet, delta: isize) {
-        let ordered = fleet.ordered();
+        let ordered = self.ordered(fleet);
         if ordered.is_empty() {
             self.selected = None;
             return;
@@ -164,7 +192,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fleet::testing::fleet_with;
+    use crate::fleet::testing::{detected, fleet_with};
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -375,6 +403,61 @@ mod tests {
             press(&mut app, &fleet, &[KeyCode::Char('w')]),
             Some(Command::OpenWeb)
         );
+    }
+
+    /// Panes 1 and 4 in "zeta", 2 and 3 in "alpha".
+    fn in_workspaces() -> Fleet {
+        let mut fleet = sample();
+        fleet.set_detected(
+            vec![
+                detected(1, "zeta", "a"),
+                detected(2, "alpha", "b"),
+                detected(3, "alpha", "c"),
+                detected(4, "zeta", "d"),
+            ],
+            0,
+        );
+        fleet
+    }
+
+    #[test]
+    fn g_switches_the_grouping() {
+        let fleet = sample();
+        let mut app = App::default();
+        assert_eq!(app.grouping, Grouping::Status);
+        assert_eq!(press(&mut app, &fleet, &[KeyCode::Char('g')]), None);
+        assert_eq!(app.grouping, Grouping::Workspace);
+        press(&mut app, &fleet, &[KeyCode::Char('g')]);
+        assert_eq!(app.grouping, Grouping::Status);
+    }
+
+    #[test]
+    fn arrows_follow_the_workspace_order() {
+        let fleet = in_workspaces();
+        let mut app = App {
+            grouping: Grouping::Workspace,
+            ..App::default()
+        };
+        app.sync_selection(&fleet);
+        assert_eq!(app.selected, Some(2));
+        let mut seen = vec![app.selected.unwrap()];
+        for _ in 0..3 {
+            press(&mut app, &fleet, &[KeyCode::Down]);
+            seen.push(app.selected.unwrap());
+        }
+        assert_eq!(seen, vec![2, 3, 1, 4]);
+    }
+
+    #[test]
+    fn switching_keeps_the_selection() {
+        let fleet = in_workspaces();
+        let mut app = App {
+            selected: Some(4),
+            ..App::default()
+        };
+        press(&mut app, &fleet, &[KeyCode::Char('g')]);
+        app.sync_selection(&fleet);
+        assert_eq!(app.selected, Some(4));
     }
 
     #[test]
