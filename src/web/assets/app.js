@@ -41,6 +41,13 @@ const elapsed = (agent) => L.elapsed(agent, Date.now());
 const byWorkspace = () => state.grouping === "workspace";
 const statusLabel = (agent) => (STATUS_LABEL[agent.status] || agent.status).toUpperCase();
 
+// Approve/deny for agents whose prompt layout comes from their source, not from real screens.
+function markUnverified(button, agent) {
+  if (agent.answer_verified) return;
+  button.classList.add("unverified");
+  button.title = `unverified for ${agent.agent}: derived from its source, not tested`;
+}
+
 /** The agents in the order the focus list shows them, which is the order j/k walk. */
 function visibleOrder() {
   return byWorkspace() ? L.groupByWorkspace(state.agents).flatMap((g) => g.agents) : state.agents;
@@ -185,6 +192,8 @@ function card(agent) {
     approve.onclick = (event) => { event.stopPropagation(); act("approve", agent.pane); };
     const deny = el("button", "deny", "Deny");
     deny.onclick = (event) => { event.stopPropagation(); act("deny", agent.pane); };
+    markUnverified(approve, agent);
+    markUnverified(deny, agent);
     row.append(approve, deny);
     node.append(row);
   }
@@ -300,6 +309,11 @@ function renderDetail() {
   // The server refuses approve/deny on questions anyway; hiding them avoids the confusion.
   const canAnswer = agent.status === "waiting" && agent.can_answer && state.permissionPrompt !== false;
   $("d-approve").hidden = $("d-deny").hidden = !canAnswer;
+  for (const id of ["d-approve", "d-deny"]) {
+    $(id).classList.remove("unverified");
+    $(id).title = "";
+    if (canAnswer) markUnverified($(id), agent);
+  }
   $("d-reply").hidden = !(agent.status === "done" || agent.status === "idle");
 }
 

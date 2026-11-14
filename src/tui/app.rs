@@ -190,6 +190,15 @@ impl App {
     }
 }
 
+/// What the footer says after approve/deny went out to an agent whose prompts aren't verified.
+pub fn sent_note(action: &Action, fleet: &Fleet) -> Option<String> {
+    let (Action::Approve { pane } | Action::Deny { pane }) = action else {
+        return None;
+    };
+    let profile = agents::profile_for(&fleet.panes.get(pane)?.agent)?;
+    (!profile.verified()).then(|| format!("sent (unverified for {})", profile.name()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -494,5 +503,28 @@ mod tests {
             assert_eq!(press(&mut app, &fleet, &[code]), None, "{code:?}");
             assert_eq!(app.confirm_close, None);
         }
+    }
+
+    #[test]
+    fn sending_to_an_unverified_agent_says_so() {
+        let fleet = fleet_with(&[
+            (1, "Claude", Status::Waiting, 0),
+            (2, "Codex", Status::Waiting, 0),
+        ]);
+        assert_eq!(sent_note(&Action::Approve { pane: 1 }, &fleet), None);
+        assert_eq!(
+            sent_note(&Action::Deny { pane: 2 }, &fleet).as_deref(),
+            Some("sent (unverified for codex)")
+        );
+        assert_eq!(
+            sent_note(
+                &Action::Reply {
+                    pane: 2,
+                    text: "x".into()
+                },
+                &fleet
+            ),
+            None
+        );
     }
 }

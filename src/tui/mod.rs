@@ -67,8 +67,10 @@ async fn event_loop(
                     Some(Command::Quit) => return Ok(()),
                     Some(Command::OpenWeb) => app.flash = Some(open_web(web.as_ref())),
                     Some(Command::Act(action)) => {
+                        let note = app::sent_note(&action, &fleet);
                         let outcome = handle.act(action).await;
-                        app.flash = outcome.message();
+                        // `message()` is `None` only for a sent action.
+                        app.flash = outcome.message().or(note);
                     }
                     None => {}
                 }

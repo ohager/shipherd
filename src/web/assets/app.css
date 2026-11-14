@@ -22,6 +22,7 @@ header h1 img { display: block; height: 32px; }
 button { font: inherit; border: 0; border-radius: 4px; padding: 3px 10px; cursor: pointer; color: #fff; background: var(--line); }
 button.link { background: none; color: var(--working); padding: 0; }
 button.approve, #d-approve { background: #238636; }
+button.unverified::after { content: "•"; margin-left: 4px; opacity: .7; }
 button.deny, #d-deny, button.danger { background: #8e2a2a; }
 button.danger-outline { background: none; color: #f08080; border: 1px solid #8e2a2a; }
 
