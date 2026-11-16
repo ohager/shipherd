@@ -1,0 +1,9 @@
+{
+  "name": "shipherd-questions",
+  "version": "0.1.0",
+  "description": "Makes Claude Code ask decisions with AskUserQuestion, so shipherd shows the agent under Needs you instead of Done",
+  "author": { "name": "ohager", "url": "https://github.com/ohager" },
+  "homepage": "https://github.com/ohager/shipherd",
+  "repository": "https://github.com/ohager/shipherd",
+  "license": "Apache-2.0"
+}

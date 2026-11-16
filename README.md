@@ -94,6 +94,20 @@ Status and replies work for every agent that has tty7 hooks; see [Supported agen
 
 For Claude Code, shipherd also shows background agents that keep running after the main turn. The agent stays under *Working* and shows `⟳`, and its background agents are listed in the preview and in the focus view.
 
+### Questions under *Needs you* (Claude Code plugin)
+
+When Claude Code asks you something as plain text at the end of its reply, its turn has ended, so tty7 reports it as *done*. Only questions asked with Claude Code's question menu (the `AskUserQuestion` tool) count as *waiting*. The `shipherd-questions` plugin closes that gap:
+
+```
+/plugin marketplace add ohager/shipherd
+/plugin install shipherd-questions@shipherd
+```
+
+- At session start it tells Claude to ask decisions with the question menu.
+- When a turn still ends with a plain-text question, a Stop hook has a small model check the last message and sends Claude back to ask it again as a menu. The check works in any language; it doesn't match words.
+
+The cost is one short call to Claude Code's background model per turn. A caught question shows as *done* for a few seconds before it moves to *Needs you*.
+
 ## Usage
 
 Open a split pane in tty7 and run:
@@ -186,6 +200,7 @@ After changing the dist config, run `dist generate` to regenerate the workflow, 
 
 - Approve/deny is verified for Claude Code only; for Codex, Gemini CLI and OpenCode it is derived from their source.
 - Background agents are only shown for Claude Code, and not while a subagent has ended its turn but still waits for a background shell of its own.
+- The `shipherd-questions` plugin relies on prompt hooks on `Stop`, which work (tested with Claude Code 2.1.280) but aren't listed in Claude Code's docs. In `claude -p` runs there is no question menu, so its check can leave a stray final message; don't enable it for scripted runs.
 - Local machine only (no remote tty7 hosts yet).
 - No Windows support.
 
