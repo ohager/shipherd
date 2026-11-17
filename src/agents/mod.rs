@@ -8,6 +8,7 @@ mod claude;
 mod codex;
 mod gemini;
 mod opencode;
+pub mod plugin;
 
 /// What to type into a pane to answer a prompt.
 #[derive(Debug, Clone, PartialEq, Eq)]

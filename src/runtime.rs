@@ -31,6 +31,8 @@ const DETECT_EVERY: Duration = Duration::from_secs(10);
 const RESYNC_AFTER_ACTION: Duration = Duration::from_millis(1500);
 /// Reading transcripts is cheap, but it's file I/O, so it runs off the core loop like git.
 const BACKGROUND_EVERY: Duration = Duration::from_secs(5);
+/// Only drives a banner, and installing the plugin is rare, so a slow check is enough.
+const PLUGIN_CHECK_EVERY: Duration = Duration::from_secs(30);
 const FIRST_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 
@@ -130,6 +132,8 @@ pub fn start(cli: Arc<dyn Tty7Cli>) -> Handle {
     let (background_targets, background_targets_rx) = watch::channel(Vec::new());
     let (background_tx, background_rx) = mpsc::channel(2);
     tokio::spawn(background_worker(background_targets_rx, background_tx));
+    let (plugin_tx, plugin_rx) = mpsc::channel(1);
+    tokio::spawn(plugin_worker(plugin_tx));
     let (git_tx, git_rx) = mpsc::unbounded_channel();
     let core = Core {
         background_targets,
@@ -144,7 +148,14 @@ pub fn start(cli: Arc<dyn Tty7Cli>) -> Handle {
         watched: HashMap::new(),
         streaming: false,
     };
-    tokio::spawn(core.run(requests_rx, captured_rx, detected_rx, git_rx, background_rx));
+    tokio::spawn(core.run(
+        requests_rx,
+        captured_rx,
+        detected_rx,
+        git_rx,
+        background_rx,
+        plugin_rx,
+    ));
     Handle {
         snapshots,
         requests,
@@ -183,6 +194,7 @@ impl Core {
         mut detected: mpsc::Receiver<Vec<DetectedPane>>,
         mut git_results: mpsc::UnboundedReceiver<(String, GitInfo)>,
         mut background: mpsc::Receiver<HashMap<u32, Vec<BackgroundTask>>>,
+        mut plugin: mpsc::Receiver<bool>,
     ) {
         let mut events: Option<mpsc::Receiver<String>> = None;
         let mut backoff = FIRST_BACKOFF;
@@ -237,6 +249,11 @@ impl Core {
                 }
                 Some(found) = background.recv() => {
                     if self.fleet.set_background(&found) {
+                        self.publish();
+                    }
+                }
+                Some(enabled) = plugin.recv() => {
+                    if self.fleet.set_questions_plugin(enabled) {
                         self.publish();
                     }
                 }
@@ -416,6 +433,22 @@ async fn detect_worker(cli: Arc<dyn Tty7Cli>, detected: mpsc::Sender<Vec<Detecte
             Err(err) => warn!("detecting agents failed: {err:#}"),
         }
         sleep(DETECT_EVERY).await;
+    }
+}
+
+/// Checks Claude Code's settings for the shipherd-questions plugin and reports every result.
+async fn plugin_worker(found: mpsc::Sender<bool>) {
+    loop {
+        let check = tokio::task::spawn_blocking(|| agents::plugin::user_settings().enabled);
+        match check.await {
+            Ok(enabled) => {
+                if found.send(enabled).await.is_err() {
+                    return;
+                }
+            }
+            Err(err) => warn!("checking for the questions plugin failed: {err}"),
+        }
+        sleep(PLUGIN_CHECK_EVERY).await;
     }
 }
 

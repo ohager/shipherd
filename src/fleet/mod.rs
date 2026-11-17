@@ -4,7 +4,7 @@ pub mod git;
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::agents::{BackgroundTarget, BackgroundTask};
+use crate::agents::{BackgroundTarget, BackgroundTask, profile_for};
 use crate::tty7::detect::DetectedPane;
 use crate::tty7::types::{AgentsResponse, Diagnostic, PaneFacts, Status};
 
@@ -110,6 +110,8 @@ pub struct Fleet {
     pub connection: Connection,
     /// The latest detection pass; kept so a resync doesn't drop agents that report no status.
     pub detected: Vec<DetectedPane>,
+    /// Whether the shipherd-questions Claude Code plugin is enabled; None until first checked.
+    pub questions_plugin: Option<bool>,
 }
 
 impl Fleet {
@@ -249,6 +251,19 @@ impl Fleet {
             .collect()
     }
 
+    /// Returns true when the value changed.
+    pub fn set_questions_plugin(&mut self, enabled: bool) -> bool {
+        let changed = self.questions_plugin != Some(enabled);
+        self.questions_plugin = Some(enabled);
+        changed
+    }
+
+    fn has_claude(&self) -> bool {
+        self.panes
+            .values()
+            .any(|p| profile_for(&p.agent).is_some_and(|profile| profile.name() == "claude"))
+    }
+
     /// Returns true when the preview actually changed.
     pub fn set_preview(&mut self, pane: u32, text: String) -> bool {
         match self.panes.get_mut(&pane) {
@@ -269,6 +284,12 @@ impl Fleet {
                 format!("status hooks not installed for {agent}: tty7 Settings → Integrations")
             })
             .collect();
+        if self.questions_plugin == Some(false) && self.has_claude() {
+            banners.push(
+                "questions claude asks as plain text show as done: run `shipherd setup claude`"
+                    .into(),
+            );
+        }
         match self.connection {
             Connection::Connected => {}
             Connection::Reconnecting => {
@@ -570,6 +591,28 @@ mod tests {
                 "tty7 server not reachable, retrying…".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn missing_questions_plugin_is_a_banner_only_with_claude_running() {
+        const PLUGIN_BANNER: &str =
+            "questions claude asks as plain text show as done: run `shipherd setup claude`";
+        let mut fleet = fleet_with(&[(2, "Codex", Status::Done, 0)]);
+        assert!(fleet.set_questions_plugin(false));
+        assert!(!fleet.set_questions_plugin(false), "unchanged");
+        assert!(fleet.banners().is_empty(), "no claude agent");
+        let mut fleet = Fleet {
+            questions_plugin: Some(false),
+            ..fleet_with(&[
+                (1, "Claude", Status::Working, 0),
+                (2, "Codex", Status::Done, 0),
+            ])
+        };
+        assert_eq!(fleet.banners(), vec![PLUGIN_BANNER.to_string()]);
+        assert!(fleet.set_questions_plugin(true));
+        assert!(fleet.banners().is_empty());
+        fleet.questions_plugin = None;
+        assert!(fleet.banners().is_empty(), "not checked yet");
     }
 
     #[test]

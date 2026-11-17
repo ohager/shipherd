@@ -72,7 +72,11 @@ shipherd doesn't connect to your agents itself. It reads what tty7 knows about t
    ```bash
    tty7 agents
    ```
-4. **Start shipherd in a tty7 pane** as well, for example in a split next to your agents (see [Usage](#usage)).
+4. **Claude Code only, optional: install the questions plugin**, so questions Claude asks as plain text show under *Needs you* (see [below](#questions-under-needs-you-claude-code-plugin)):
+   ```bash
+   shipherd setup claude
+   ```
+5. **Start shipherd in a tty7 pane** as well, for example in a split next to your agents (see [Usage](#usage)).
 
 What happens without hooks:
 - If an agent has no hooks installed, shipherd shows a banner such as `status hooks not installed for claude: tty7 Settings → Integrations`. The agent is still listed, but without a status.
@@ -96,12 +100,13 @@ For Claude Code, shipherd also shows background agents that keep running after t
 
 ### Questions under *Needs you* (Claude Code plugin)
 
-When Claude Code asks you something as plain text at the end of its reply, its turn has ended, so tty7 reports it as *done*. Only questions asked with Claude Code's question menu (the `AskUserQuestion` tool) count as *waiting*. The `shipherd-questions` plugin closes that gap:
+When Claude Code asks you something as plain text at the end of its reply, its turn has ended, so tty7 reports it as *done*. Only questions asked with Claude Code's question menu (the `AskUserQuestion` tool) count as *waiting*. The `shipherd-questions` plugin closes that gap. Install it with:
 
+```bash
+shipherd setup claude
 ```
-/plugin marketplace add ohager/shipherd
-/plugin install shipherd-questions@shipherd
-```
+
+This runs `claude plugin marketplace add ohager/shipherd` and `claude plugin install shipherd-questions@shipherd` for you; you can also run them yourself, or the equivalent `/plugin` commands inside Claude Code. While a Claude Code agent is running and the plugin isn't enabled, the TUI and the dashboard show a banner pointing to `shipherd setup claude`.
 
 - At session start it tells Claude to ask decisions with the question menu.
 - When a turn still ends with a plain-text question, a Stop hook has a small model check the last message and sends Claude back to ask it again as a menu. The check works in any language; it doesn't match words.
