@@ -6,11 +6,10 @@ const GROUPS = [["waiting", "Needs you"], ["working", "Working"], ["done", "Done
 const STATUS_LABEL = { waiting: "needs you", working: "working", done: "done", idle: "idle", unknown: "unknown" };
 
 // selected: the focused pane (from the address); null shows the board.
-// permissionPrompt: what the selected pane's screen shows; null until its first preview arrives.
 // loaded: whether the first snapshot has arrived, so a missing pane can be told apart from a closed one.
 // grouping: "status" or "workspace", how the board and the focus list are laid out.
 // openIdle: the workspaces whose idle fold is open on the workspace board.
-const state = { agents: [], banners: [], selected: null, interacting: false, nextId: 1, ws: null, permissionPrompt: null, loaded: false, grouping: "status", openIdle: new Set() };
+const state = { agents: [], banners: [], selected: null, interacting: false, nextId: 1, ws: null, loaded: false, grouping: "status", openIdle: new Set() };
 const GROUPING_KEY = "shipherd.grouping";
 let pendingKeys = [];
 let flushTimer = null;
@@ -40,13 +39,6 @@ const elapsed = (agent) => L.elapsed(agent, Date.now());
 
 const byWorkspace = () => state.grouping === "workspace";
 const statusLabel = (agent) => (STATUS_LABEL[agent.status] || agent.status).toUpperCase();
-
-// Approve/deny for agents whose prompt layout comes from their source, not from real screens.
-function markUnverified(button, agent) {
-  if (agent.answer_verified) return;
-  button.classList.add("unverified");
-  button.title = `unverified for ${agent.agent}: derived from its source, not tested`;
-}
 
 /** The agents in the order the focus list shows them, which is the order j/k walk. */
 function visibleOrder() {
@@ -101,9 +93,7 @@ function receive(msg) {
       break;
     case "preview":
       if (msg.pane === state.selected) {
-        state.permissionPrompt = msg.permission_prompt;
         showPreview(msg.text);
-        renderDetail();
       }
       break;
     case "procs":
@@ -122,13 +112,17 @@ function receive(msg) {
 // --- navigation ---------------------------------------------------------
 
 /** Opening a pane adds a history entry, so the browser's back button returns to the board.
- *  Switching between panes in the focus view replaces it instead of piling up entries. */
-function select(pane, { replace = false } = {}) {
-  if (state.selected === pane) return;
-  const url = L.hashForPane(pane) || location.pathname;
-  if (replace) history.replaceState(null, "", url);
-  else history.pushState(null, "", url);
-  applySelection(pane);
+ *  Switching between panes in the focus view replaces it instead of piling up entries.
+ *  `interact` opens it with Interact switched on. */
+function select(pane, { replace = false, interact = false } = {}) {
+  if (state.selected !== pane) {
+    const url = L.hashForPane(pane) || location.pathname;
+    if (replace) history.replaceState(null, "", url);
+    else history.pushState(null, "", url);
+    applySelection(pane);
+  }
+  // Sent after the watch, since the server only allows Interact on the watched pane.
+  if (interact) setInteracting(true, true);
 }
 
 function back() {
@@ -139,7 +133,6 @@ function applySelection(pane) {
   hideCloseConfirm();
   setInteracting(false, true);
   state.selected = pane;
-  state.permissionPrompt = null;
   $("d-mirror").textContent = "";
   $("d-procs").textContent = "";
   $("d-result").textContent = "";
@@ -192,15 +185,12 @@ function card(agent) {
   const where = [agent.repo, agent.branch].filter(Boolean).join(" · ") || agent.cwd || "";
   node.append(top, el("div", "title", displayTitle(agent)), el("div", "where", where));
 
-  if (agent.status === "waiting" && agent.can_answer) {
+  // Most prompts are questions with several options, so the card opens the pane for typing.
+  if (agent.status === "waiting") {
     const row = el("div", "card-actions");
-    const approve = el("button", "approve", "Approve");
-    approve.onclick = (event) => { event.stopPropagation(); act("approve", agent.pane); };
-    const deny = el("button", "deny", "Deny");
-    deny.onclick = (event) => { event.stopPropagation(); act("deny", agent.pane); };
-    markUnverified(approve, agent);
-    markUnverified(deny, agent);
-    row.append(approve, deny);
+    const interact = el("button", "interact", "Interact");
+    interact.onclick = (event) => { event.stopPropagation(); select(agent.pane, { interact: true }); };
+    row.append(interact);
     node.append(row);
   }
   node.onclick = () => select(agent.pane);
@@ -292,7 +282,7 @@ function renderDetail() {
     $("d-pill").className = "pill";
     $("d-meta").textContent = "";
     $("d-facts").replaceChildren();
-    $("d-approve").hidden = $("d-deny").hidden = $("d-reply").hidden = true;
+    $("d-reply").hidden = true;
     setInteracting(false, false);
     return;
   }
@@ -313,14 +303,6 @@ function renderDetail() {
   for (const line of L.backgroundLines(agent, Date.now())) rows.push(["background", line]);
   $("d-facts").replaceChildren(...rows.flatMap(([label, value]) => [el("dt", null, label), el("dd", null, value)]));
 
-  // The server refuses approve/deny on questions anyway; hiding them avoids the confusion.
-  const canAnswer = agent.status === "waiting" && agent.can_answer && state.permissionPrompt !== false;
-  $("d-approve").hidden = $("d-deny").hidden = !canAnswer;
-  for (const id of ["d-approve", "d-deny"]) {
-    $(id).classList.remove("unverified");
-    $(id).title = "";
-    if (canAnswer) markUnverified($(id), agent);
-  }
   $("d-reply").hidden = !(agent.status === "done" || agent.status === "idle");
 }
 
@@ -445,8 +427,6 @@ $("d-confirm-yes").onclick = () => {
   act("close", state.selected);
   hideCloseConfirm();
 };
-$("d-approve").onclick = () => act("approve", state.selected);
-$("d-deny").onclick = () => act("deny", state.selected);
 $("d-reply").onsubmit = (event) => {
   event.preventDefault();
   const input = $("d-reply-text");
