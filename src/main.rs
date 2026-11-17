@@ -3,23 +3,35 @@ use std::process::{Command, exit};
 use std::sync::Arc;
 
 use anyhow::{Context, bail};
+use shipherd::agents::plugin;
 use shipherd::tty7::cli::RealCli;
 use shipherd::{logging, runtime, tui, web};
 
 const DEFAULT_PORT: u16 = 7777;
 
-fn parse_port() -> anyhow::Result<u16> {
+enum Mode {
+    Run { port: u16 },
+    SetupClaude,
+}
+
+fn parse_args() -> anyhow::Result<Mode> {
     let mut args = std::env::args().skip(1);
     match (args.next().as_deref(), args.next(), args.next()) {
-        (None, _, _) => Ok(DEFAULT_PORT),
-        (Some("--port"), Some(port), None) => port.parse().context("--port expects a number"),
-        _ => bail!("usage: shipherd [--port N]"),
+        (None, _, _) => Ok(Mode::Run { port: DEFAULT_PORT }),
+        (Some("--port"), Some(port), None) => Ok(Mode::Run {
+            port: port.parse().context("--port expects a number")?,
+        }),
+        (Some("setup"), Some(agent), None) if agent == "claude" => Ok(Mode::SetupClaude),
+        _ => bail!("usage: shipherd [--port N]\n       shipherd setup claude"),
     }
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let port = parse_port()?;
+    let port = match parse_args()? {
+        Mode::Run { port } => port,
+        Mode::SetupClaude => return plugin::setup(),
+    };
     if let Err(err) = Command::new("tty7").arg("--version").output()
         && err.kind() == ErrorKind::NotFound
     {
