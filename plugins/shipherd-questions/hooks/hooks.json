@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "printf %s '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"When you need a decision or an answer from the user before you can continue, ask it with the AskUserQuestion tool, not as plain text at the end of your reply. The user watches a dashboard that shows an agent as waiting only while such a question is open.\"}}'"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "You check how a coding agent ended its turn. Hook input:\n$ARGUMENTS\n\nIf last_assistant_message says the AskUserQuestion tool is unavailable or cannot be used, respond {\"ok\": true}.\n\nOtherwise read last_assistant_message (any language). Respond {\"ok\": false, ...} only if it contains an actual question addressed to the user that the agent needs answered before it can continue, such as a choice between options or facts only the user knows. These do NOT count: a report of finished work, a courtesy offer like 'let me know if you need anything', and text that only talks about questions, tools or instructions without asking anything.\n\nIf it asks, respond {\"ok\": false, \"reason\": \"Your last message asks the user a question. Ask it again with the AskUserQuestion tool (same language, concise options) instead of plain text, so the user's dashboard shows that you are waiting.\"}\nOtherwise respond {\"ok\": true}.\n\nRespond with JSON only.",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

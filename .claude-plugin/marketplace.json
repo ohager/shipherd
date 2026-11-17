@@ -1,0 +1,11 @@
+{
+  "name": "shipherd",
+  "description": "Claude Code plugins that work with shipherd",
+  "owner": { "name": "ohager", "url": "https://github.com/ohager" },
+  "plugins": [
+    {
+      "name": "shipherd-questions",
+      "source": "./plugins/shipherd-questions"
+    }
+  ]
+}
