@@ -25,7 +25,7 @@ Running five Claude Code sessions across three repos? shipherd shows them all in
 ## Features
 
 - **Everything at a glance.** Agents are grouped as **Needs you → Working → Done → Idle**, longest-waiting first, with repo, branch and time in state.
-- **Answer without switching.** Approve or deny a permission prompt, or send a reply, straight from the overview.
+- **Answer without switching.** Approve or deny a permission prompt or send a reply from the TUI, or jump from a waiting card on the dashboard straight into Interact mode.
 - **Group by workspace.** Switch between grouping by status and by tty7 workspace, in the TUI (`g`) and on the dashboard.
 - **Web dashboard.** A kanban board with one card per agent, plus a focus view with a live mirror of the agent's screen, its processes and ports.
 - **Interact mode.** Type into an agent's pane from the browser when a quick reply isn't enough.
@@ -90,7 +90,7 @@ Status and replies work for every agent that has tty7 hooks; see [Supported agen
 | OpenCode | ✓ | Enter / Esc | – |
 | Others with tty7 hooks | ✓ | – | – |
 
-"Verified" means the prompt detection was checked against the agent's real screens. For the others it is derived from their source code, and the TUI and dashboard mark their approve/deny as unverified. If you use one of them, a capture of a permission prompt (`tty7 capture %N --plain`) is very welcome as an issue.
+"Verified" means the prompt detection was checked against the agent's real screens. For the others it is derived from their source code, and the TUI marks their approve/deny as unverified. If you use one of them, a capture of a permission prompt (`tty7 capture %N --plain`) is very welcome as an issue.
 
 For Claude Code, shipherd also shows background agents that keep running after the main turn. The agent stays under *Working* and shows `⟳`, and its background agents are listed in the preview and in the focus view.
 
@@ -124,8 +124,8 @@ Below the list you see the last lines of the selected agent's screen.
 
 Press `w` in the TUI to open the dashboard; the link logs your browser in.
 
-- **Board:** columns for *Needs you*, *Working* and *Done*, idle agents folded underneath. Use the `Status | Workspace` switch in the header to get one column per workspace instead.
-- **Focus view:** click a card to see the agent's live screen, its directory, command, processes and ports, with Approve / Deny / Reply, Interact and Close pane. `j`/`k` switch agents, `Esc` goes back to the board. The address (`/#pane-48`) keeps the selection across reloads.
+- **Board:** columns for *Needs you*, *Working* and *Done*, idle agents folded underneath. A waiting card's **Interact** button opens its focus view with Interact already on. Use the `Status | Workspace` switch in the header to get one column per workspace instead.
+- **Focus view:** click a card to see the agent's live screen, its directory, command, processes and ports, with Reply, Interact and Close pane. `j`/`k` switch agents, `Esc` goes back to the board. The address (`/#pane-48`) keeps the selection across reloads.
 - **Interact:** sends your keystrokes to the pane. The panel turns amber while it's on, and it switches itself off after two minutes without a keystroke.
 
 ## Security
